@@ -1,5 +1,17 @@
-opencv-python
-mediapipe
-numpy
-pyautogui
-keyboard
+# Core libraries
+numpy>=1.23.0
+opencv-python>=4.7.0.72
+
+# Google MediaPipe (hand/body landmarks)
+mediapipe==0.10.14
+
+# Deep Learning
+tensorflow==2.15.0
+keras>=2.15.0
+
+# System control & automation
+pyautogui>=0.9.54
+keyboard>=0.13.5
+
+# Utils
+matplotlib>=3.8.0
