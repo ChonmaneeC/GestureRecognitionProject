@@ -1,0 +1,13 @@
+//ปุ่ม f5 รันสคริปต์นี้
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Gesture Control",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/simple_gesture_control.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}

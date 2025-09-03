@@ -1,0 +1,4 @@
+//ผูก Interpreter ของ .venvs กับ VSCode
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv"
+}
