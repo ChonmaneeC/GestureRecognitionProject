@@ -46,6 +46,7 @@ while cap.isOpened():
             with open(save_path, "a", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(coords)
+                print("Saved frame:", coords[:6], "...")  # แสดง x,y,z ของ landmark 2 จุดแรก
 
             # วาด landmark บนภาพ
             mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
