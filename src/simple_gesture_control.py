@@ -50,13 +50,18 @@ def is_extended(lm, tip, pip_, mcp):
 
 def count_fingers(lms):
     # lms: list[(x,y)] normalized 0..1
-    # นับเฉพาะ index(8), middle(12), ring(16) เป็นฐาน 1-3 นิ้ว
     fingers = {
+        'thumb':  False,
         'index':  is_extended(lms, 8, 6, 5),
         'middle': is_extended(lms, 12,10,9),
         'ring':   is_extended(lms, 16,14,13),
-        # pinky/ thumb ไว้เพิ่มทีหลังตามโจทย์
+        'pinky':  False,
     }
+    # Thumb: ใช้แกน x เปรียบเทียบ tip กับ pip (mirror แล้ว)
+    if lms[4][0] < lms[3][0]:
+        fingers['thumb'] = True
+    # Pinky: ใช้ is_extended เช่นเดียวกับนิ้วอื่น
+    fingers['pinky'] = is_extended(lms, 20, 18, 17)
     return fingers
 
 def tip_point(lms, idx=8):
@@ -74,7 +79,7 @@ smooth_pos = None
 
 with mp_hands.Hands(
     model_complexity=0,
-    max_num_hands=1,
+    max_num_hands=2,  # รองรับ 2 มือ
     min_detection_confidence=0.6,
     min_tracking_confidence=0.6
 ) as hands:
@@ -88,66 +93,58 @@ with mp_hands.Hands(
         res = hands.process(rgb)
 
         if res.multi_hand_landmarks:
-            hand = res.multi_hand_landmarks[0]
-            lms = [(lm.x, lm.y) for lm in hand.landmark]
+            for idx, hand in enumerate(res.multi_hand_landmarks):
+                lms = [(lm.x, lm.y) for lm in hand.landmark]
 
-            fingers = count_fingers(lms)
-            num_up = sum(fingers.values())
+                fingers = count_fingers(lms)
+                num_up = sum(fingers.values())
 
-            # ตำแหน่งนิ้วชี้ (index tip = 8)
-            pos = tip_point(lms, 8)
-            if smooth_pos is None:
-                smooth_pos = pos.copy()
-            else:
-                smooth_pos = SMOOTHING*smooth_pos + (1-SMOOTHING)*pos
+                pos = tip_point(lms, 8)
+                if smooth_pos is None:
+                    smooth_pos = pos.copy()
+                else:
+                    smooth_pos = SMOOTHING*smooth_pos + (1-SMOOTHING)*pos
 
-            if prev_pos is None:
+                if prev_pos is None:
+                    prev_pos = smooth_pos.copy()
+
+                delta = smooth_pos - prev_pos
                 prev_pos = smooth_pos.copy()
 
-            delta = smooth_pos - prev_pos
-            prev_pos = smooth_pos.copy()
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, hand, mp_hands.HAND_CONNECTIONS)
+                cv2.putText(frame, f"Hand {idx+1} Fingers up: {num_up}", (10, 30 + idx*50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+                cv2.putText(frame, f"Status: {list(fingers.values())}", (10, 60 + idx*50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,0,0), 2)
 
-            # วาด UI
-            import mediapipe as mp
-            mp.solutions.drawing_utils.draw_landmarks(
-                frame, hand, mp_hands.HAND_CONNECTIONS)
-            cv2.putText(frame, f"Fingers up: {num_up}", (10,30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+                now = time.time()
+                ready = (now - last_action_time) > COOLDOWN_SEC
 
-            now = time.time()
-            ready = (now - last_action_time) > COOLDOWN_SEC
-
-            # ----- Mapping -----
-            # 1 นิ้ว: scroll / pan
-            if num_up == 1:
-                # เลื่อนตามแกน Y (ลงบวก)
-                if abs(delta[1]) > 0.01:  # ยกนิ้วขึ้นลงชัดเจน
-                    amount = int(-delta[1] * SCROLL_SCALE * 100)  # ปรับความไว
-                    if amount != 0:
-                        pyautogui.scroll(amount)
-
-                # ซ้าย/ขวา: pan ด้วยปุ่มลูกศร
-                if abs(delta[0]) > 0.03 and ready:
-                    if delta[0] > 0:
-                        pyautogui.press('right')
-                    else:
-                        pyautogui.press('left')
-                    last_action_time = now
-
-            # 2 นิ้ว (index+middle): สลับแท็บ
-            elif num_up == 2 and ready:
-                if delta[0] > SWIPE_THRESH:
-                    switch_tab_right(); last_action_time = now
-                elif delta[0] < -SWIPE_THRESH:
-                    switch_tab_left(); last_action_time = now
-
-            # 3 นิ้ว (index+middle+ring): สลับ Virtual Desktop
-            elif num_up == 3 and ready:
-                if delta[0] > SWIPE_THRESH:
-                    switch_desktop_right(); last_action_time = now
-                elif delta[0] < -SWIPE_THRESH:
-                    switch_desktop_left(); last_action_time = now
-
+                # Mapping เฉพาะมือแรก
+                if idx == 0:
+                    # ใช้เฉพาะนิ้วชี้ scroll/pan
+                    if num_up == 1 and fingers['index'] and not fingers['middle'] and not fingers['ring'] and not fingers['pinky'] and not fingers['thumb']:
+                        if abs(delta[1]) > 0.01:
+                            amount = int(-delta[1] * SCROLL_SCALE * 100)
+                            if amount != 0:
+                                pyautogui.scroll(amount)
+                        if abs(delta[0]) > 0.03 and ready:
+                            if delta[0] > 0:
+                                pyautogui.press('right')
+                            else:
+                                pyautogui.press('left')
+                            last_action_time = now
+                    elif num_up == 2 and ready:
+                        if delta[0] > SWIPE_THRESH:
+                            switch_tab_right(); last_action_time = now
+                        elif delta[0] < -SWIPE_THRESH:
+                            switch_tab_left(); last_action_time = now
+                    elif num_up == 3 and ready:
+                        if delta[0] > SWIPE_THRESH:
+                            switch_desktop_right(); last_action_time = now
+                        elif delta[0] < -SWIPE_THRESH:
+                            switch_desktop_left(); last_action_time = now
         cv2.imshow("Simple Gesture Control (q to quit)", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'): break
 
