@@ -22,8 +22,8 @@ It allows natural, contactless interaction with a computer by mapping gestures (
 
 ## 🛠️ Installation
 
-### 1. Clone the repository
 ```bash
+### 1. Clone the repository
 git clone https://github.com/your-username/gesture-hci.git
 cd gesture-hci
 
