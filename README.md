@@ -34,10 +34,11 @@ py -3.11 -m venv .venv
 ###3. Install dependencies
 pip install -r requirements.txt
 
----
+```
 
 ## ▶️ Usage
 
+```bash
 ### Test camera
 python src/test_camera.py
 
