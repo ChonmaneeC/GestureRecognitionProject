@@ -22,8 +22,8 @@ It allows natural, contactless interaction with a computer by mapping gestures (
 
 ## 🛠️ Installation
 
-### 1. Clone the repository
 ```bash
+### 1. Clone the repository
 git clone https://github.com/your-username/gesture-hci.git
 cd gesture-hci
 
@@ -34,10 +34,11 @@ py -3.11 -m venv .venv
 ###3. Install dependencies
 pip install -r requirements.txt
 
----
+```
 
 ## ▶️ Usage
 
+```bash
 ### Test camera
 python src/test_camera.py
 
