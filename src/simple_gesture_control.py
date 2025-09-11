@@ -1,4 +1,4 @@
-# Prototype ควบคุมคอมจริง
+# Gesture-based Mouse + Control System
 
 import cv2, time, platform
 import numpy as np
@@ -9,33 +9,33 @@ import pyautogui
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-SCROLL_SCALE = 120          # ขนาดการเลื่อนแนวตั้งต่อการเคลื่อนนิ้ว
-SWIPE_THRESH = 0.10         # ระยะสัดส่วนเฟรม (0-1 ของความกว้างภาพ) ที่นับเป็น "ปัด"
-COOLDOWN_SEC = 0.7          # กันสั่งซ้ำเร็วเกิน
-SMOOTHING = 0.6             # ค่าถ่วงให้ตำแหน่งนิ้วนุ่มนวลขึ้น [0..1]
+SCROLL_SCALE = 120
+SCROLL_THRESH_Y = 0.008
+PAN_THRESH_X = 0.02
+SWIPE_THRESH_X = 0.06
+COOLDOWN_SEC = 0.8
+SMOOTHING = 0.4
 
-# ---------- OS-specific hotkeys ----------
 OS = platform.system().lower()
 
+# ---------- OS-specific hotkeys ----------
 def switch_tab_right():
-    if OS == 'darwin': pyautogui.hotkey('ctrl', 'tab')         # macOS บางแอปก็ใช้ได้
-    else: pyautogui.hotkey('ctrl', 'tab')
+    pyautogui.hotkey('ctrl', 'tab')
 
 def switch_tab_left():
-    if OS == 'darwin': pyautogui.hotkey('ctrl', 'shift', 'tab')
-    else: pyautogui.hotkey('ctrl', 'shift', 'tab')
+    pyautogui.hotkey('ctrl', 'shift', 'tab')
 
 def switch_desktop_right():
     if OS == 'windows': pyautogui.hotkey('ctrl', 'winleft', 'right')
     elif OS == 'darwin': pyautogui.hotkey('ctrl', 'right')
-    else: pyautogui.hotkey('ctrl', 'alt', 'right')  # อาจต้องแมพคีย์ลัดบน Linux เอง
+    else: pyautogui.hotkey('ctrl', 'alt', 'right')
 
 def switch_desktop_left():
     if OS == 'windows': pyautogui.hotkey('ctrl', 'winleft', 'left')
     elif OS == 'darwin': pyautogui.hotkey('ctrl', 'left')
     else: pyautogui.hotkey('ctrl', 'alt', 'left')
 
-# ---------- Geometry helpers ----------
+# ---------- Helpers ----------
 def angle_between(v1, v2):
     num = np.dot(v1, v2)
     den = np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6
@@ -46,22 +46,18 @@ def is_extended(lm, tip, pip_, mcp):
     v1 = np.array([lm[tip][0]-lm[pip_][0], lm[tip][1]-lm[pip_][1]])
     v2 = np.array([lm[mcp][0]-lm[pip_][0], lm[mcp][1]-lm[pip_][1]])
     ang = angle_between(v1, v2)
-    return ang > 160  # นิ้วยืดจะเข้าใกล้ 180°
+    return ang > 160
 
 def count_fingers(lms):
-    # lms: list[(x,y)] normalized 0..1
     fingers = {
         'thumb':  False,
         'index':  is_extended(lms, 8, 6, 5),
         'middle': is_extended(lms, 12,10,9),
         'ring':   is_extended(lms, 16,14,13),
-        'pinky':  False,
+        'pinky':  is_extended(lms, 20,18,17),
     }
-    # Thumb: ใช้แกน x เปรียบเทียบ tip กับ pip (mirror แล้ว)
     if lms[4][0] < lms[3][0]:
         fingers['thumb'] = True
-    # Pinky: ใช้ is_extended เช่นเดียวกับนิ้วอื่น
-    fingers['pinky'] = is_extended(lms, 20, 18, 17)
     return fingers
 
 def tip_point(lms, idx=8):
@@ -73,79 +69,100 @@ cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     raise RuntimeError("Cannot open camera")
 
-last_action_time = 0
-prev_pos = None
-smooth_pos = None
+last_action_time = 0.0
+last_click_time = 0.0
+dragging = False
+
+screen_w, screen_h = pyautogui.size()
 
 with mp_hands.Hands(
     model_complexity=0,
-    max_num_hands=2,  # รองรับ 2 มือ
-    min_detection_confidence=0.6,
-    min_tracking_confidence=0.6
+    max_num_hands=1,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
 ) as hands:
 
     while True:
         ok, frame = cap.read()
         if not ok: break
-        h, w = frame.shape[:2]
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res = hands.process(rgb)
 
         if res.multi_hand_landmarks:
-            for idx, hand in enumerate(res.multi_hand_landmarks):
-                lms = [(lm.x, lm.y) for lm in hand.landmark]
+            hand = res.multi_hand_landmarks[0]
+            lms = [(lm.x, lm.y) for lm in hand.landmark]
+            mp.solutions.drawing_utils.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
 
-                fingers = count_fingers(lms)
-                num_up = sum(fingers.values())
+            fingers = count_fingers(lms)
+            num_up = sum(fingers.values())
+            cv2.putText(frame, f"Fingers: {num_up}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
 
-                pos = tip_point(lms, 8)
-                if smooth_pos is None:
-                    smooth_pos = pos.copy()
-                else:
-                    smooth_pos = SMOOTHING*smooth_pos + (1-SMOOTHING)*pos
+            now = time.time()
+            ready = (now - last_action_time) > COOLDOWN_SEC
 
-                if prev_pos is None:
-                    prev_pos = smooth_pos.copy()
+            # ---------- 1 นิ้ว = Mouse ----------
+            if num_up == 1 and fingers['index']:
+                x = int(lms[8][0] * screen_w)
+                y = int(lms[8][1] * screen_h)
+                pyautogui.moveTo(x, y)
 
-                delta = smooth_pos - prev_pos
-                prev_pos = smooth_pos.copy()
+                # Left click (index + thumb)
+                if fingers['index'] and fingers['thumb']:
+                    if now - last_click_time < 0.4:
+                        pyautogui.doubleClick(); print("[MOUSE] Double Click")
+                    else:
+                        pyautogui.click(); print("[MOUSE] Click")
+                    last_click_time = now
 
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, hand, mp_hands.HAND_CONNECTIONS)
-                cv2.putText(frame, f"Hand {idx+1} Fingers up: {num_up}", (10, 30 + idx*50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-                cv2.putText(frame, f"Status: {list(fingers.values())}", (10, 60 + idx*50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,0,0), 2)
+                # Right click (index + middle)
+                if fingers['index'] and fingers['middle']:
+                    pyautogui.rightClick(); print("[MOUSE] Right Click")
 
-                now = time.time()
-                ready = (now - last_action_time) > COOLDOWN_SEC
+                # Drag (index + thumb ค้าง)
+                if fingers['index'] and fingers['thumb'] and not dragging:
+                    pyautogui.mouseDown(); dragging = True
+                    print("[MOUSE] Drag Start")
+                elif not (fingers['index'] and fingers['thumb']) and dragging:
+                    pyautogui.mouseUp(); dragging = False
+                    print("[MOUSE] Drag End")
 
-                # Mapping เฉพาะมือแรก
-                if idx == 0:
-                    # ใช้เฉพาะนิ้วชี้ scroll/pan
-                    if num_up == 1 and fingers['index'] and not fingers['middle'] and not fingers['ring'] and not fingers['pinky'] and not fingers['thumb']:
-                        if abs(delta[1]) > 0.01:
-                            amount = int(-delta[1] * SCROLL_SCALE * 100)
-                            if amount != 0:
-                                pyautogui.scroll(amount)
-                        if abs(delta[0]) > 0.03 and ready:
-                            if delta[0] > 0:
-                                pyautogui.press('right')
-                            else:
-                                pyautogui.press('left')
-                            last_action_time = now
-                    elif num_up == 2 and ready:
-                        if delta[0] > SWIPE_THRESH:
-                            switch_tab_right(); last_action_time = now
-                        elif delta[0] < -SWIPE_THRESH:
-                            switch_tab_left(); last_action_time = now
-                    elif num_up == 3 and ready:
-                        if delta[0] > SWIPE_THRESH:
-                            switch_desktop_right(); last_action_time = now
-                        elif delta[0] < -SWIPE_THRESH:
-                            switch_desktop_left(); last_action_time = now
-        cv2.imshow("Simple Gesture Control (q to quit)", frame)
+                continue
+
+            # ---------- 2 นิ้ว = Scroll/Pan ----------
+            if fingers['index'] and fingers['middle'] and num_up == 2:
+                tip = tip_point(lms, 8)
+                # ใช้ delta Y เลื่อนจอ
+                delta_y = tip[1] - lms[6][1]
+                if abs(delta_y) > SCROLL_THRESH_Y:
+                    amount = int(-delta_y * SCROLL_SCALE * 100)
+                    pyautogui.scroll(amount); print("[ACTION] Scroll", amount)
+
+                continue
+
+            # ---------- 3 นิ้ว = Switch Desktop ----------
+            if fingers['index'] and fingers['middle'] and fingers['ring'] and num_up == 3 and ready:
+                delta_x = lms[8][0] - lms[5][0]
+                if delta_x > SWIPE_THRESH_X:
+                    switch_desktop_right(); print("[ACTION] Desktop Right")
+                    last_action_time = now
+                elif delta_x < -SWIPE_THRESH_X:
+                    switch_desktop_left(); print("[ACTION] Desktop Left")
+                    last_action_time = now
+                continue
+
+            # ---------- Swipe whole hand = Switch Tab ----------
+            if ready:
+                delta_x = lms[0][0] - lms[9][0]
+                if delta_x > SWIPE_THRESH_X:
+                    switch_tab_right(); print("[ACTION] Tab Right")
+                    last_action_time = now
+                elif delta_x < -SWIPE_THRESH_X:
+                    switch_tab_left(); print("[ACTION] Tab Left")
+                    last_action_time = now
+
+        cv2.imshow("Gesture Control (q to quit)", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'): break
 
 cap.release()
