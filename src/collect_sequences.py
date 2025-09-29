@@ -36,7 +36,7 @@ KEYMAP = {
 
 # จำนวน “นิ้วยก” ที่คาดหวังของแต่ละคลาส (ใช้กรองตอนบันทึกคลิป)
 EXPECTED_FINGERS = {
-    "desktop_left": 5,  "desktop_right": 5,  "screenshot": 5,
+    "desktop_left": 5,  "desktop_right": 5,  "screenshot": None,
     "tab_left": 3,      "tab_right": 3,
     "scroll_left": 2,   "scroll_right": 2,   "scroll_up": 2,   "scroll_down": 2,
     "idle": None
