@@ -1,0 +1,18 @@
+{
+  "npz": "d:\\SIIT\\DES400\\ProjectGesture\\dataset\\gestures.npz",
+  "num_samples": 93,
+  "T": 30,
+  "F": 63,
+  "classes": [
+    "desktop_left",
+    "desktop_right",
+    "idle"
+  ],
+  "per_class_counts": {
+    "desktop_left": 21,
+    "desktop_right": 32,
+    "idle": 40
+  },
+  "bad_clips_skipped": 0,
+  "seed": 42
+}

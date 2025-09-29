@@ -1,4 +1,38 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# venv
+.venv/
+venv/
+
+# OS / IDE
 .DS_Store
+Thumbs.db
+.vscode/
+
+# Datasets (raw sequences ไม่ดันขึ้น repo)
+dataset/sequences/
+!dataset/sequences/_meta.json
+
+# Artifacts
+*.log
+*.tmp
+
+# Models (เราจะใช้ Git LFS กับไฟล์ใหญ่)
+*.keras
+*.h5
+*.tflite
+*.onnx
+*.npz
+*.npy
+
+# Videos/images (ถ้ามีเก็บตัวอย่าง)
+*.mp4
+*.mov
+*.avi
+*.png
+*.jpg
+*.jpeg
