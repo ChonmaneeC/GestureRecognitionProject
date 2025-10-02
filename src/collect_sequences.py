@@ -1,8 +1,3 @@
-# src/collect_sequences.py
-# เก็บคลิป landmarks (T เฟรม) สำหรับเทรน LSTM ตามคลาสที่กำหนด
-# รองรับระบุผู้เก็บ (--user) และมือ (--hand) → เซฟเป็น dataset/sequences/<label>/<user>/<hand>/*.npy
-# มีตัวช่วยนับ "นิ้วยก" เพื่อกรองตามคลาส, mirror x ให้มือซ้ายเป็นแกนมือขวา
-
 import os
 import cv2
 import time
@@ -16,15 +11,14 @@ from pathlib import Path
 
 # ================ CONFIG =================
 CLASSES = [
-    "desktop_left", "desktop_right",          # 5 นิ้วปัด ซ้าย/ขวา
-    "tab_left", "tab_right",                  # 3 นิ้วปัด ซ้าย/ขวา
-    "scroll_left", "scroll_right",            # 2 นิ้วปัด ซ้าย/ขวา
-    "scroll_up", "scroll_down",               # 2 นิ้วปัด ขึ้น/ลง
-    "screenshot",                             # 5 นิ้วแบ -> กำมือ (ในคลิปเดียวกัน)
-    "idle"                                    # พักมือ/ไม่มีท่า (สำคัญมาก)
+    "desktop_left", "desktop_right",
+    "tab_left", "tab_right",
+    "scroll_left", "scroll_right",
+    "scroll_up", "scroll_down",
+    "screenshot",
+    "idle"
 ]
 
-# ปุ่มลัดเลือกคลาส
 KEYMAP = {
     'a': "desktop_left",   'd': "desktop_right",
     'j': "tab_left",       'l': "tab_right",
@@ -34,7 +28,6 @@ KEYMAP = {
     'z': "idle"
 }
 
-# จำนวน “นิ้วยก” ที่คาดหวังของแต่ละคลาส (ใช้กรองตอนบันทึกคลิป)
 EXPECTED_FINGERS = {
     "desktop_left": 5,  "desktop_right": 5,  "screenshot": None,
     "tab_left": 3,      "tab_right": 3,
@@ -42,17 +35,11 @@ EXPECTED_FINGERS = {
     "idle": None
 }
 
-# ยาวคลิป (จำนวนเฟรม/ตัวอย่าง)
-T = 30  # แนะนำ 24–40
-
-# โฟลเดอร์ปลายทาง root (ข้างในแบ่ง label/user/hand อัตโนมัติ)
+T = 30
 OUT_ROOT = Path("dataset/sequences")
-
-# เกณฑ์เชื่อมั่น mediapipe
 MIN_DET, MIN_TRK = 0.6, 0.6
-
-# แสดง hint บนจอ
 SHOW_HINT = True
+
 # ========================================
 
 def parse_args():
@@ -78,8 +65,7 @@ def is_extended(lm2d, tip, pip_, mcp):
     v1 = np.array([lm2d[tip][0]-lm2d[pip_][0], lm2d[tip][1]-lm2d[pip_][1]])
     v2 = np.array([lm2d[mcp][0]-lm2d[pip_][0], lm2d[mcp][1]-lm2d[pip_][1]])
     ang = angle_between(v1, v2)
-    return ang > 160  # ยืด ~ 180°
-
+    return ang > 160
 def count_fingers(lm2d):
     return {
         'thumb':  is_extended(lm2d, 4, 3, 2),
@@ -91,15 +77,15 @@ def count_fingers(lm2d):
 
 def expected_finger_hint(label):
     if label in ("desktop_left", "desktop_right"):
-        return "ใช้ 5 นิ้ว ปัดซ้าย/ขวา"
+        return "Use 5 fingers to swipe left/right."
     if label in ("tab_left", "tab_right"):
-        return "ใช้ 3 นิ้ว (ชี้+กลาง+นาง) ปัดซ้าย/ขวา"
+        return "Use 3 fingers (index + middle + ring) to swipe left/right."
     if label in ("scroll_left", "scroll_right", "scroll_up", "scroll_down"):
-        return "ใช้ 2 นิ้ว (ชี้+กลาง) ปัดตามทิศ"
+        return "Use 2 fingers (pointer + middle) to sweep in the direction"
     if label == "screenshot":
-        return "แบมือ 5 นิ้ว → กำมือ ในคลิปเดียวกัน"
+        return "Open your hand with 5 fingers → make a fist in the same clip."
     if label == "idle":
-        return "มืออยู่นิ่ง/ไม่ออกท่า"
+        return "Hands remain still/no gestures"
     return ""
 
 def save_meta(root: Path, T_value: int):
@@ -118,7 +104,7 @@ def ensure_dirs(label: str, user: str, hand: str) -> Path:
 
 def save_clip(label: str, user: str, hand: str, clip_np: np.ndarray) -> str:
     """
-    บันทึกเป็น .npy: shape = (T, 63)
+    Save as .npy: shape = (T, 63)
     path: dataset/sequences/<label>/<user>/<hand>/clip_YYYYmmdd_HHMMSS_xxxxxx.npy
     """
     out_dir = ensure_dirs(label, user, hand)
@@ -132,10 +118,8 @@ def main():
     args = parse_args()
     T_local = int(args.frames)
 
-    # เตรียมโฟลเดอร์ + meta
     save_meta(OUT_ROOT, T_local)
     for c in CLASSES:
-        # เตรียมโฟลเดอร์ระดับ label เฉย ๆ (user/hand จะสร้างตอน save)
         (OUT_ROOT / c).mkdir(parents=True, exist_ok=True)
 
     mp_hands = mp.solutions.hands
@@ -184,13 +168,9 @@ def main():
 
             if res.multi_hand_landmarks:
                 hand = res.multi_hand_landmarks[0]
-
-                # ตรวจฝั่งมือจาก MediaPipe ("Left"/"Right")
                 handed_label = None
                 if res.multi_handedness:
                     handed_label = res.multi_handedness[0].classification[0].label
-
-                # landmarks → pts_2d + vec63 (mirror x ถ้ามือซ้าย)
                 pts_2d = []
                 vec63 = []
                 for i in range(21):
@@ -203,20 +183,17 @@ def main():
                     vec63.extend([x, y, z])
                 vec63 = np.array(vec63, dtype=np.float32)
 
-                # วาดโครงมือ
                 mp_draw.draw_landmarks(
                     frame, hand, mp_hands.HAND_CONNECTIONS,
                     mp_styles.get_default_hand_landmarks_style(),
                     mp_styles.get_default_hand_connections_style()
                 )
 
-                # นับนิ้วยก
                 fingers = count_fingers(pts_2d)
                 num_up = int(sum(fingers.values()))
                 cv2.putText(frame, f"Fingers up: {num_up}", (10, 86),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
 
-                # อัดคลิป
                 if recording:
                     need = EXPECTED_FINGERS.get(current)
                     ok_to_record = True if need is None else (num_up == need)
@@ -224,7 +201,6 @@ def main():
                     if ok_to_record:
                         buf.append(vec63)
 
-                    # แถบ progress
                     cv2.rectangle(frame, (10, h-30), (10 + int((len(buf)/T_local)*(w-20)), h-10), (0, 200, 0), -1)
                     cv2.rectangle(frame, (10, h-30), (w-10, h-10), (255, 255, 255), 2)
 
@@ -236,7 +212,6 @@ def main():
                         cv2.putText(frame, f"Saved: {Path(out_path).name}", (10, h-46),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                # ลูกศรทิศ (ช่วยเตือน)
                 tip = np.array(pts_2d[8], dtype=np.float32)
                 if prev_tip is not None and SHOW_HINT:
                     delta = tip - prev_tip
@@ -246,9 +221,8 @@ def main():
                 prev_tip = tip.copy()
 
             else:
-                prev_tip = None  # reset เมื่อไม่เห็นมือ
+                prev_tip = None
 
-            # แถบคีย์ลัด
             cv2.putText(frame,
                         "A/D desktop  J/L tab  H/N scroll<- ->  U/K scroll^ v  O screenshot  Z idle  |  S start/stop  Q quit",
                         (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (240, 240, 240), 1)
@@ -258,10 +232,8 @@ def main():
             if k == ord('q'):
                 break
             elif k == ord('s'):
-                # เคลียร์บัฟ/เริ่ม-หยุด
                 buf.clear()
                 if not recording and args.countdown > 0:
-                    # countdown ก่อนเริ่ม
                     t0 = time.time()
                     while time.time() - t0 < args.countdown:
                         ok2, frame2 = cap.read()
