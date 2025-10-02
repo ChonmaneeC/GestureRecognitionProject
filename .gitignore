@@ -13,7 +13,7 @@ venv/
 Thumbs.db
 .vscode/
 
-# Datasets (raw sequences ไม่ดันขึ้น repo)
+# Datasets
 dataset/sequences/
 !dataset/sequences/_meta.json
 
@@ -21,7 +21,7 @@ dataset/sequences/
 *.log
 *.tmp
 
-# Models (เราจะใช้ Git LFS กับไฟล์ใหญ่)
+# Models
 *.keras
 *.h5
 *.tflite
@@ -29,7 +29,7 @@ dataset/sequences/
 *.npz
 *.npy
 
-# Videos/images (ถ้ามีเก็บตัวอย่าง)
+# Videos/images
 *.mp4
 *.mov
 *.avi
