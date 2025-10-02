@@ -1,4 +1,3 @@
-# src/gesture_mouse_control.py
 # Gesture-based Mouse & System Control (Rule-based, stable)
 
 import cv2
@@ -13,34 +12,26 @@ from collections import defaultdict
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-# Cursor
-CURSOR_SMOOTHING = 0.35     # 0..1 (สูง = หน่วงเยอะ นุ่มขึ้น)
-CURSOR_CLAMP_MARGIN = 0.02  # กันออกนอกขอบจอ
+CURSOR_SMOOTHING = 0.35
+CURSOR_CLAMP_MARGIN = 0.02
 
-# Click / Double-click / Drag
-DOUBLE_CLICK_WINDOW = 0.35  # วินาทีที่นับเป็น double click
-PINCH_HYSTERESIS = 0.015    # ฮิสเทอรีซิสตรวจ pinch ระหว่างนิ้วโป้ง-ชี้ (normalized distance)
+DOUBLE_CLICK_WINDOW = 0.35
+PINCH_HYSTERESIS = 0.015
 
-# Scroll / Pan (เมื่อชู 2 นิ้ว)
-SCROLL_SCALE = 120          # คูณเพิ่มแรงเลื่อน (abs สูง = เลื่อนแรง)
-SCROLL_ACCUM_TRIGGER = 50   # เมื่อสะสมเกินค่านี้ ค่อยสั่ง scroll หนึ่งครั้ง
-SCROLL_Y_THRESH = 0.006     # ความไวแกน Y
-PAN_X_THRESH = 0.018        # ความไวแกน X (สั่ง arrow left/right)
+SCROLL_SCALE = 120
+SCROLL_ACCUM_TRIGGER = 50
+SCROLL_Y_THRESH = 0.006
+PAN_X_THRESH = 0.018
 
-# Swipe ทั้งมือ = สลับแท็บ
-SWIPE_X_THRESH = 0.055      # ระยะ X ของข้อมือ (wrist) ที่นับเป็น swipe
+SWIPE_X_THRESH = 0.055
 
-# 3 นิ้ว = สลับ Virtual Desktop
 DESKTOP_SWIPE_X = 0.06
 
-# Debounce
-COOLDOWN_SEC = 0.75         # กันสั่งรัว
+COOLDOWN_SEC = 0.75
 
-# Detection confidence
 MIN_DET = 0.55
 MIN_TRK = 0.55
 
-# Overlay
 SHOW_OVERLAY = True
 
 # ====================== OS Hotkeys ========================
@@ -70,7 +61,7 @@ def angle_between(v1, v2):
     return np.degrees(np.arccos(c))
 
 def is_extended(lm2d, tip, pip_, mcp):
-    """ตรวจนิ้วยืดด้วยมุม (2D)"""
+    """Finger extensor angle (2D)"""
     v1 = np.array([lm2d[tip][0]-lm2d[pip_][0], lm2d[tip][1]-lm2d[pip_][1]])
     v2 = np.array([lm2d[mcp][0]-lm2d[pip_][0], lm2d[mcp][1]-lm2d[pip_][1]])
     ang = angle_between(v1, v2)
@@ -91,7 +82,7 @@ def tip_point(lm2d, idx=8):
     return np.array([lm2d[idx][0], lm2d[idx][1]], dtype=np.float32)
 
 def pinch_distance(lm2d, a=8, b=4):
-    """ระยะนิ้วชี้-นิ้วโป้ง (normalized 0..1)"""
+    """Index finger-thumb distance (normalized 0..1)"""
     p1 = np.array(lm2d[a]); p2 = np.array(lm2d[b])
     return float(np.linalg.norm(p1 - p2))
 
@@ -134,15 +125,14 @@ with mp_hands.Hands(model_complexity=0,
 
         if res.multi_hand_landmarks:
             hand = res.multi_hand_landmarks[0]
-            lm2d = [(lm.x, lm.y) for lm in hand.landmark]  # normalized
+            lm2d = [(lm.x, lm.y) for lm in hand.landmark]
             mp.solutions.drawing_utils.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
 
             fingers = count_fingers(lm2d)
             num_up = sum(fingers.values())
 
-            # ====== 1 นิ้ว = Mouse (move / click / right / drag) ======
+            # ====== 1 finger = Mouse (move / click / right / drag) ======
             if num_up == 1 and fingers['index'] and not any([fingers[k] for k in ['middle','ring','pinky']]):
-                # Cursor move (EMA smoothing)
                 cur = tip_point(lm2d, 8)
                 if smooth_cursor is None:
                     smooth_cursor = cur.copy()
@@ -157,9 +147,8 @@ with mp_hands.Hands(model_complexity=0,
                 action_text = f"Mouse move ({sx},{sy})"
 
                 # Click detection:
-                # Left click: pinch index+thumb (edge-trigger with double-click window)
+                # Left click: pinch index+thumb
                 dist = pinch_distance(lm2d, 8, 4)
-                # สร้างกรอบค่า "กด/ปล่อย" ด้วย hysteresis
                 pinch_pressed = dist < PINCH_HYSTERESIS
                 if pinch_pressed and not dragging:
                     now = time.time()
@@ -169,22 +158,12 @@ with mp_hands.Hands(model_complexity=0,
                         pyautogui.click(); action_text = "Left Click"
                     last_click_time = now
 
-                # Right click: index + middle ยืด (พร้อมกัน) ในโหมดเมาส์
-                if fingers['index'] and fingers['middle']:
+                # Right click: index + ring
+                if fingers['index'] and fingers['ring']:
                     pyautogui.rightClick(); action_text = "Right Click"
                     time.sleep(0.15)  # กันรัวเกินไป
 
-                # Drag: pinch ค้าง (mouseDown/Up ด้วย hysteresis)
-                if pinch_pressed and not dragging:
-                    pyautogui.mouseDown(); dragging = True; action_text = "Drag Start"
-                elif not pinch_pressed and dragging:
-                    pyautogui.mouseUp(); dragging = False; action_text = "Drag End"
-
-                # เตรียม delta tip สำหรับ 2/3 นิ้วต่อเนื่อง
-                if prev_tip is None: prev_tip = cur.copy()
-                else: prev_tip = cur.copy()
-
-            # ====== 2 นิ้ว = Scroll / Pan ======
+            # ====== 2 finger = Scroll / Pan ======
             elif fingers['index'] and fingers['middle'] and num_up == 2:
                 cur = tip_point(lm2d, 8)
                 if prev_tip is None:
@@ -200,7 +179,6 @@ with mp_hands.Hands(model_complexity=0,
                     action_text = f"Scroll {amt}"
                     scroll_accum[0] = 0
 
-                # pan (ซ้าย/ขวา) ด้วยลูกศร
                 if abs(delta[0]) > PAN_X_THRESH and (time.time()-last_action_time) > COOLDOWN_SEC:
                     if delta[0] > 0:
                         pyautogui.press('right'); action_text = "Pan Right"
@@ -208,9 +186,8 @@ with mp_hands.Hands(model_complexity=0,
                         pyautogui.press('left'); action_text = "Pan Left"
                     last_action_time = time.time()
 
-            # ====== 3 นิ้ว = Switch Virtual Desktop ======
+            # ====== 3 finger = Switch Virtual Desktop ======
             elif fingers['index'] and fingers['middle'] and fingers['ring'] and num_up == 3:
-                # ใช้ทิศนิ้วชี้เทียบโคน (8 vs 5) เพื่อเดาชี้ซ้าย/ขวาในเฟรม
                 dx = lm2d[8][0] - lm2d[5][0]
                 if abs(dx) > DESKTOP_SWIPE_X and (time.time()-last_action_time) > COOLDOWN_SEC:
                     if dx > 0:
@@ -219,9 +196,8 @@ with mp_hands.Hands(model_complexity=0,
                         switch_desktop_left(); action_text = "Desktop Left"
                     last_action_time = time.time()
 
-            # ====== Swipe ทั้งมือ = Switch Tab ======
+            # ====== Swipe with both hands = Switch Tab ======
             else:
-                # ใช้ตำแหน่งข้อมือ (wrist = 0)
                 wx = lm2d[0][0]
                 if smooth_wrist_x is None:
                     smooth_wrist_x = wx; prev_wrist_x = wx
@@ -245,12 +221,10 @@ with mp_hands.Hands(model_complexity=0,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
 
         else:
-            # reset บาง state เมื่อไม่เห็นมือ
             prev_tip = None
             smooth_cursor = None
             smooth_wrist_x = None
             prev_wrist_x = None
-            # ไม่ reset dragging เพื่อไม่ทำ mouseUp โดยไม่ตั้งใจ
 
         cv2.imshow("Gesture Mouse Control (q to quit)", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
