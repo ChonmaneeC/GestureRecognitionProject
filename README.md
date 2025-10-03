@@ -1,43 +1,45 @@
 # Gesture Recognition Using Skeletal Data for Real-Time Human-Computer Interaction
 
-## 1. Project Overview
-This project is a **Senior Project** {CN2-2025} at SIIT (Thammasat University).  
-It focuses on **Real-Time Hand Gesture Recognition using Skeletal Data** (MediaPipe Hands + LSTM).  
-The goal is to use a **webcam** to detect hand gestures → train with **LSTM** → control the computer in real-time (desktop switching, tab switching, scrolling, mouse actions, etc.).
+## 📌 Project Overview
+This project is a **Senior Project (CN2-2025)** at SIIT, Thammasat University.  
+It focuses on **real-time hand gesture recognition using skeletal data** (MediaPipe Hands + LSTM).  
+The main goal is to use a **webcam** to detect hand gestures, train with **LSTM**, and control the computer in real time for actions such as desktop switching, tab switching, scrolling, and mouse interactions.
 
 ---
 
-## 2. Features
-Supported gestures:
+## ✨ Features
+The system supports both **left** and **right** hands (mirror correction applied automatically).  
+Supported gestures are divided into two groups:
 
-1. **5 fingers (open palm)** → swipe left/right = Switch Desktop  
-2. **3 fingers** → swipe left/right = Switch Browser Tab  
-3. **2 fingers** → swipe up/down/left/right = Scroll / Pan  
-4. **Open palm ➝ Fist (5 → 0)** = Capture Screenshot  
-5. **1 finger (index)** → Mouse control (movement, drag)  
-6. **Thumb + Index pinch** → Left Click (single)  
+### 🔹 LSTM-based gestures (temporal sequences)
+1. **5 fingers swipe (left/right)** → Switch Desktop  
+2. **3 fingers swipe (left/right)** → Switch Browser Tab  
+3. **2 fingers swipe (up/down/left/right)** → Scroll / Pan  
+4. **Open palm ➝ Fist (5 → 0)** → Screenshot  
+5. **Idle (no gesture)** → Prevents false triggers  
+
+### 🔹 Rule-based gestures (low-latency controls)
+1. **1 finger (index)** → Mouse movement / drag  
+2. **Thumb + Index pinch** → Left Click (single)  
    - Double pinch quickly = Double Left Click  
-7. **Thumb + Ring pinch** → Right Click  
-
-Supports **both left and right hand** (mirror correction applied automatically).
+3. **Thumb + Ring pinch** → Right Click  
 
 ---
 
-## 🛠️ Installation
+## ⚙️ Installation
 
 ```bash
-### 1. Clone the repository
+# 1. Clone the repository
 git clone https://github.com/ChonmaneeC/GestureRecognitionProject.git
-cd ProjectGesture
+cd GestureRecognitionProject
 
-### 2. Create and activate virtual environment (Python 3.11 recommended)
+# 2. Create and activate virtual environment (Python 3.11 recommended)
 py -3.11 -m venv .venv
 .venv\Scripts\activate   # Windows
 source .venv/bin/activate   # Linux / Mac
 
-###3. Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
-
 
 ```
 
@@ -46,10 +48,10 @@ pip install -r requirements.txt
 ```bash
 ### Collect dataset
 #Record gesture samples (30 frames = 1 sequence):
-python src/collect_sequences.py --user name --hand right --frames 30
+python src/collect_sequences.py --user <name> --hand right --frames 30
 
 ### Prepare dataset
-#Combine raw .npy into gestures.npz:
+#Combine collected .npy clips into a single dataset:
 python src/prepare_dataset.py
 
 ### Train LSTM model
@@ -62,8 +64,17 @@ python src/realtime_inference.py
 
 ```
 
+## 📂 Dataset and Models
+
+```bash
+Due to large file sizes, dataset sequences and trained models are stored on Google Drive:  
+[👉 Download here](https://drive.google.com/drive/folders/1LDwHEnwSbyWNUQFL7FyXwD3U3u5Gfear?usp=sharing)
+
+```
+
 ## Notes
-- Both best.keras (model) and gesture_norm.npz (normalization info) must exist inside models/.
-- Gestures are recognized with cooldown timers to avoid repeated triggers (e.g., desktop switch, tab switch).
+- Both best.keras (trained model) and gesture_norm.npz (normalization info) must exist inside the models/ directory before running inference.
+- Gestures such as desktop switch, tab switch use cooldown timers to avoid repeated triggers.
 - Scrolling and mouse actions are continuous (no cooldown).
+- Dataset files (.npy) are not pushed to GitHub (to avoid large file sizes). Please share them via Google Drive/OneDrive and link inside Issues.
 ---
