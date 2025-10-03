@@ -33,7 +33,7 @@ cd ProjectGesture
 ### 2. Create and activate virtual environment (Python 3.11 recommended)
 py -3.11 -m venv .venv
 .venv\Scripts\activate   # Windows
-# source .venv/bin/activate   # Linux / Mac
+source .venv/bin/activate   # Linux / Mac
 
 ###3. Install dependencies
 pip install -r requirements.txt
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 ```bash
 ### Collect dataset
 #Record gesture samples (30 frames = 1 sequence):
-python src/collect_sequences.py --label desktop_left
+python src/collect_sequences.py --user name --hand right --frames 30
 
 ### Prepare dataset
 #Combine raw .npy into gestures.npz:
