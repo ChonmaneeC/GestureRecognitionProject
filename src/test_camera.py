@@ -1,6 +1,6 @@
 import cv2
 
-cap = cv2.VideoCapture(0)  # ถ้ามีกล้องหลายตัว ลองเปลี่ยนเป็น 1,2
+cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     raise RuntimeError("Cannot open camera")
 
