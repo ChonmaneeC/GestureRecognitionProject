@@ -1,10 +1,8 @@
-# src/train_lstm.py
-# เทรน LSTM สำหรับจำแนก gesture sequences (X: N x T x F, y: N)
-# - โหลดจาก dataset/gestures.npz
-# - ทำ normalization
-# - แบ่ง train/val
-# - เทรนด้วย callbacks
-# - บันทึกโมเดลและสถิติที่ models/gesture_lstm/
+# Train an LSTM to classify gesture sequences (X: N x T x F, y: N)
+# - Load from dataset/gestures.npz
+# - Perform normalization
+# - Train with callbacks
+# - Save the model and statistics to models/gesture_lstm/
 
 import os
 import json
@@ -52,7 +50,7 @@ def make_class_weights(y, num_classes):
     counts = np.bincount(y, minlength=num_classes).astype(np.float32)
     counts[counts == 0] = 1.0
     inv = 1.0 / counts
-    w = inv / inv.sum() * num_classes  # normalize ให้ค่าเฉลี่ย~1
+    w = inv / inv.sum() * num_classes
     return {i: float(w[i]) for i in range(num_classes)}, counts.tolist()
 
 def main():
@@ -66,8 +64,8 @@ def main():
 
     # ---------- Load ----------
     data = np.load(args.data, allow_pickle=True)
-    X = data["X"]                 # (N, T, F)
-    y = data["y"]                 # (N,)
+    X = data["X"]
+    y = data["y"]
     classes = list(data["classes"])
     num_classes = len(classes)
     N, T, F = X.shape
@@ -132,7 +130,7 @@ def main():
     print(f"[OK] Val: loss={val_loss:.4f}  acc={val_acc:.4f}")
 
     # ---------- Save model & artifacts ----------
-    # 1) SavedModel (folder)
+    # 1) SavedModel
     model.save(os.path.join(args.outdir, "final.keras"))
     # 2) Normalization + classes
     norm_path = os.path.join("models", "gesture_norm.npz")
@@ -140,7 +138,6 @@ def main():
     np.savez(norm_path, mean=Xmean, std=Xstd, classes=np.array(classes), T=T, F=F)
     print(f"[OK] Saved final model to {os.path.join(args.outdir, 'final.keras')}")
     print(f"[OK] Saved norm: {norm_path}")
-
     # 3) Metadata
     meta = {
         "data": os.path.abspath(args.data),
@@ -164,6 +161,5 @@ def main():
     print(f"[OK] Wrote train_meta.json")
 
 if __name__ == "__main__":
-    # Optional: Limit TF logs
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     main()

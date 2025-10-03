@@ -1,6 +1,3 @@
-# src/make_norm_from_dataset.py
-# สร้าง models/gesture_norm.npz จาก dataset/gestures.npz
-
 import os, json
 import numpy as np
 
@@ -10,18 +7,17 @@ OUTPATH = os.path.join(OUTDIR, "gesture_norm.npz")
 
 def main():
     if not os.path.exists(DATASET):
-        raise FileNotFoundError(f"Dataset not found: {DATASET} (ให้รัน prepare_dataset.py ก่อน)")
+        raise FileNotFoundError(f"Dataset not found: {DATASET} (Run prepare_dataset.py first)")
 
     os.makedirs(OUTDIR, exist_ok=True)
 
     data = np.load(DATASET, allow_pickle=True)
-    X = data["X"]          # (N, T, F)
+    X = data["X"]
     classes = list(data["classes"])
     T = int(X.shape[1])
     F = int(X.shape[2])
 
-    # mean/std แบบ global ต่อ feature
-    Xmean = X.mean(axis=(0,1), keepdims=True)  # (1,1,F)
+    Xmean = X.mean(axis=(0,1), keepdims=True)
     Xstd  = X.std(axis=(0,1), keepdims=True) + 1e-6
 
     np.savez(OUTPATH,

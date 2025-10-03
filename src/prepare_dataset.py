@@ -1,8 +1,3 @@
-# src/prepare_dataset.py
-# รวมคลิป .npy (shape: T x 63) ใน dataset/sequences/*/*.npy
-# -> บันทึกเป็น dataset/gestures.npz (X, y, classes)
-#    พร้อมสรุปสถิติ class_counts.csv และพิมพ์รายงานบน console
-
 import os
 import sys
 import csv

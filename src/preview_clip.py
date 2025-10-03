@@ -1,4 +1,3 @@
-# src/preview_clip.py
 import numpy as np
 import cv2
 import mediapipe as mp
@@ -9,10 +8,10 @@ mp_styles = mp.solutions.drawing_styles
 mp_hands = mp.solutions.hands
 
 def preview(path):
-    data = np.load(path)  # (T, 63)
+    data = np.load(path)
     T = data.shape[0]
     for t in range(T):
-        vec = data[t]  # (63,)
+        vec = data[t]
         pts = [(vec[i], vec[i+1]) for i in range(0, 63, 3)]
         frame = np.ones((480, 640, 3), dtype=np.uint8) * 20
         for (x, y) in pts:

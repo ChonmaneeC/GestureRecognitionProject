@@ -1,4 +1,3 @@
-# src/realtime_inference.py
 # Real-time gesture inference (MediaPipe → LSTM → pyautogui actions)
 
 import os
@@ -16,17 +15,14 @@ import platform
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-# โฟลเดอร์โมเดลที่ train_lstm.py เซฟไว้
 MODEL_DIR = "models/gesture_lstm"
 MODEL_PATH = "models/gesture_lstm/best.keras"
-# train_lstm.py จะเซฟ mean/std/classes/T/F ที่นี่
 NORM_PATH = "models/gesture_norm.npz"
 
-# ค่า default (จะถูกแทนด้วยค่าจาก NORM หากมี)
 T_DEFAULT = 30
 F_DEFAULT = 63
 
-# เกณฑ์ความมั่นใจ (probability) ต่อคลาส
+# probability per class
 THRESH = {
     "desktop_left": 0.75,
     "desktop_right": 0.75,
@@ -37,17 +33,15 @@ THRESH = {
     "scroll_left": 0.70,
     "scroll_right": 0.70,
     "screenshot": 0.80,
-    "idle": 1.10,  # ทำให้ไม่ถูกเลือก (กดเลือกคลาสอื่นก่อน)
+    "idle": 1.10,
 }
 
-# cooldown (วินาที) สำหรับคำสั่งแบบครั้งเดียว
 COOLDOWN = {
     "desktop_left": 0.9,
     "desktop_right": 0.9,
     "tab_left": 0.7,
     "tab_right": 0.7,
     "screenshot": 1.2,
-    # scroll เป็น action ต่อเนื่อง ปล่อย 0
     "scroll_up": 0.0,
     "scroll_down": 0.0,
     "scroll_left": 0.0,
@@ -55,9 +49,9 @@ COOLDOWN = {
     "idle": 0.0,
 }
 
-SCROLL_STEP_Y = 600          # เลื่อนแนวตั้งต่อ 1 trigger
-HSCROLL_STEP_X = 80          # เลื่อนแนวนอน (fallback ปุ่มลูกศรถ้าแอปไม่รองรับ)
-DRAW_PROB_BAR = True         # วาดแท่ง prob top-3
+SCROLL_STEP_Y = 600
+HSCROLL_STEP_X = 80
+DRAW_PROB_BAR = True
 
 MIN_DET, MIN_TRK = 0.6, 0.6  # MediaPipe thresholds
 
@@ -110,22 +104,22 @@ def do_action(label: str):
 # ================== Utilities =====================
 def load_model_and_norm():
     """
-    โหลดโมเดลตามลำดับความสำคัญ:
+    Load models in order of priority:
       1) MODEL_PATH (.keras)
       2) models/gesture_lstm/final.keras
-      3) โฟลเดอร์ SavedModel (fallback ด้วย keras.layers.TFSMLayer)
+      3) SavedModel folder (fallback with keras.layers.TFSMLayer)
     """
     candidates = [
         MODEL_PATH,
         os.path.join(MODEL_DIR, "final.keras"),
-        MODEL_DIR,  # SavedModel dir
+        MODEL_DIR,
     ]
     model = None
     last_err = None
     for path in candidates:
         try:
             if os.path.isdir(path):
-                # Keras 3: SavedModel ต้องโหลดแบบ layer
+                # Keras 3: SavedModel must be loaded as a layer.
                 from keras.layers import TFSMLayer
                 model = TFSMLayer(path, call_endpoint="serving_default")
             else:
@@ -161,7 +155,7 @@ def main():
     model, Xmean, Xstd, classes, T, F = load_model_and_norm()
     print("[INFO] classes:", classes)
 
-    # map threshold / cooldown เฉพาะคลาสที่มีจริง
+   # map threshold / cooldown only for classes that actually exist
     thr = {c: THRESH.get(c, 0.8) for c in classes}
     cd  = {c: COOLDOWN.get(c, 0.6) for c in classes}
     last_time = {c: 0.0 for c in classes}
@@ -203,7 +197,7 @@ def main():
                 if res.multi_handedness:
                     handed = res.multi_handedness[0].classification[0].label  # 'Left' or 'Right'
 
-                # landmarks → vec63 (mirror x ถ้า Left)
+                # landmarks → vec63 (mirror x if Left)
                 pts = []
                 for i in range(21):
                     x = hand.landmark[i].x
@@ -212,24 +206,23 @@ def main():
                     if handed == "Left":
                         x = 1.0 - x
                     pts.extend([x, y, z])
-                vec = np.asarray(pts, dtype=np.float32)  # (63,)
+                vec = np.asarray(pts, dtype=np.float32)
                 buf.append(vec)
 
-                # วาดโครงมือ
                 drawer.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS,
                                       styles.get_default_hand_landmarks_style(),
                                       styles.get_default_hand_connections_style())
 
-                # infer เมื่อ buffer เต็ม
+                # infer when buffer is full
                 if len(buf) == T:
-                    X = np.stack(list(buf))[None, ...]  # (1, T, F)
+                    X = np.stack(list(buf))[None, ...]
                     Xn = (X - Xmean) / Xstd
 
-                    # รองรับทั้งโมเดล Keras ปกติ และ TFSMLayer (SavedModel)
+                    # Supports both regular Keras models and TFSMLayer (SavedModel).
                     if hasattr(model, "predict"):
-                        prob = model.predict(Xn, verbose=0)[0]  # (C,)
+                        prob = model.predict(Xn, verbose=0)[0]
                     else:
-                        # TFSMLayer ส่งกลับ dict ของ endpoints → ใช้ค่าแรก
+                        # TFSMLayer returns a dict of endpoints → uses the first value
                         out = model(Xn)
                         if isinstance(out, dict):
                             out = list(out.values())[0]
@@ -241,7 +234,7 @@ def main():
                     label_show, conf_show = label, conf
                     top3 = topk(prob, classes, k=3)
 
-                    # ตัดสินใจด้วย threshold + cooldown
+                    # Decide with threshold + cooldown
                     now = time.time()
                     if label != "idle" and conf >= thr.get(label, 0.8):
                         if now - last_time[label] >= cd.get(label, 0.6):
