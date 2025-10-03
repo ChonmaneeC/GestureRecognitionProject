@@ -1,5 +1,3 @@
-# แสดงจุดมือจาก MediaPipe บนภาพจากกล้อง
-
 import cv2
 import mediapipe as mp
 
@@ -20,7 +18,7 @@ with mp_hands.Hands(
     while True:
         ok, frame = cap.read()
         if not ok: break
-        frame = cv2.flip(frame, 1)  # mirror ให้เหมือนส่องกระจก
+        frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res = hands.process(rgb)
 
