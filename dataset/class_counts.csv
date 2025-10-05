@@ -1,5 +1,12 @@
 class,count
-desktop_left,21
-desktop_right,32
-idle,40
+desktop_left,122
+desktop_right,122
+idle,158
+screenshot,139
+scroll_down,83
+scroll_left,181
+scroll_right,132
+scroll_up,133
+tab_left,113
+tab_right,165
 _bad_clips_skipped,0
