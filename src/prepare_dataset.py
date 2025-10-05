@@ -1,4 +1,3 @@
-# src/prepare_dataset.py
 import os
 import sys
 import csv
