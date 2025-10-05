@@ -1,25 +1,26 @@
+# src/prepare_dataset.py
 import os
 import sys
 import csv
 import json
 import argparse
 import numpy as np
-from glob import glob
-from collections import defaultdict, Counter
+from collections import Counter
 
 def parse_args():
     p = argparse.ArgumentParser(description="Pack sequence dataset into a single .npz")
     p.add_argument("--in_dir",  type=str, default="dataset/sequences",
-                   help="input directory that contains class subfolders with .npy clips")
+                   help="root folder that contains class subfolders with .npy clips (any nesting inside is OK)")
     p.add_argument("--out_npz", type=str, default="dataset/gestures.npz",
                    help="output .npz path")
     p.add_argument("--summary_csv", type=str, default="dataset/class_counts.csv",
                    help="output CSV with per-class counts")
     p.add_argument("--min_per_class", type=int, default=1,
-                   help="skip class if it has fewer than this many clips")
+                   help="drop classes having fewer than this many valid clips")
     p.add_argument("--limit_per_class", type=int, default=0,
-                   help="(optional) cap number of clips per class (0=unlimited)")
+                   help="cap number of clips per class (0 = unlimited)")
     p.add_argument("--seed", type=int, default=42, help="shuffle seed")
+    p.add_argument("--verbose", action="store_true", help="print scanned files and reasons for skipping")
     return p.parse_args()
 
 def read_meta(in_dir):
@@ -32,6 +33,29 @@ def read_meta(in_dir):
             pass
     return {}
 
+def recursive_list_label_files(root):
+    """
+    Walk under root and yield (label, filepath) where `label` is the
+    first-level directory name right under `root`.
+      Accepts layouts like:
+        root/<label>/*.npy
+        root/<label>/<user>/*.npy
+        root/<label>/<user>/<hand>/*.npy
+        root/<label>/<anything>/**/<anything>.npy
+    """
+    root = os.path.abspath(root)
+    for dirpath, _, files in os.walk(root):
+        for fn in files:
+            if not fn.lower().endswith(".npy"):
+                continue
+            fpath = os.path.join(dirpath, fn)
+            rel = os.path.relpath(fpath, root)
+            parts = rel.split(os.sep)
+            if len(parts) < 2:
+                continue
+            label = parts[0]
+            yield label, fpath
+
 def main():
     args = parse_args()
     rng = np.random.default_rng(args.seed)
@@ -40,120 +64,125 @@ def main():
         print(f"[ERROR] input folder not found: {args.in_dir}")
         sys.exit(1)
 
-    # discover classes = subfolders
-    classes = sorted([d for d in os.listdir(args.in_dir)
-                      if os.path.isdir(os.path.join(args.in_dir, d)) and not d.startswith("_")])
-    if not classes:
+    # discover labels as first-level dirs
+    labels = sorted([d for d in os.listdir(args.in_dir)
+                     if os.path.isdir(os.path.join(args.in_dir, d)) and not d.startswith("_")])
+    if not labels:
         print(f"[ERROR] no class folders under: {args.in_dir}")
         sys.exit(1)
 
-    label2id = {c: i for i, c in enumerate(classes)}
-    print("[INFO] Classes:", classes)
+    # collect files recursively per label
+    per_class_files = {c: [] for c in labels}
+    for label, fpath in recursive_list_label_files(args.in_dir):
+        per_class_files.setdefault(label, []).append(fpath)
 
-    # Try to read expected T from meta (optional)
-    meta = read_meta(args.in_dir)
-    expected_T = None
-    if isinstance(meta, dict):
-        expected_T = meta.get("T", None)
-
-    X_list, y_list = [], []
-    bad_clips = 0
-    per_class_files = {c: sorted(glob(os.path.join(args.in_dir, c, "*.npy"))) for c in classes}
-
-    # filter classes by min_per_class (filenames first)
-    classes_kept = [c for c in classes if len(per_class_files[c]) >= args.min_per_class]
-    dropped = set(classes) - set(classes_kept)
-    if dropped:
-        print(f"[WARN] drop classes due to min_per_class={args.min_per_class}: {sorted(list(dropped))}")
-    classes = classes_kept
-    label2id = {c: i for i, c in enumerate(classes)}
-
-    # load clips
-    per_class_counts = Counter()
-    T_ref, F_ref = None, None
-
-    for c in classes:
-        fpaths = per_class_files[c]
-        if args.limit_per_class > 0 and len(fpaths) > args.limit_per_class:
-            # random sample limit_per_class
-            idx = rng.permutation(len(fpaths))[:args.limit_per_class]
-            fpaths = [fpaths[i] for i in idx]
-
-        for fp in fpaths:
-            try:
-                arr = np.load(fp)  # expect (T, 63)
-                if arr.ndim != 2:
-                    bad_clips += 1
-                    continue
-
-                T, F = arr.shape
-                # set reference shape on first valid clip
-                if T_ref is None:
-                    T_ref, F_ref = T, F
-                    if expected_T is not None and expected_T != T_ref:
-                        print(f"[WARN] _meta.T={expected_T} but found clip T={T_ref}; will enforce T={T_ref}")
-
-                # enforce same feature length
-                if F_ref is not None and F != F_ref:
-                    bad_clips += 1
-                    continue
-
-                # enforce same T (trim or skip)
-                if T != T_ref:
-                    # simple policy: skip mismatched T (safer than pad/trim silently)
-                    bad_clips += 1
-                    continue
-
-                X_list.append(arr.astype(np.float32))
-                y_list.append(label2id[c])
-                per_class_counts[c] += 1
-
-            except Exception:
-                bad_clips += 1
-                continue
-
-    if not X_list:
-        print("[ERROR] no valid clips to pack. Check shapes or min_per_class/limit_per_class.")
+    # drop labels with no files at all
+    labels = [c for c in labels if len(per_class_files.get(c, [])) > 0]
+    if not labels:
+        print("[ERROR] found no .npy files under any class folders.")
         sys.exit(1)
 
-    # stack
-    X = np.stack(X_list, axis=0)  # (N, T, F)
-    y = np.array(y_list, dtype=np.int64)
+    print("[INFO] Classes:", labels)
+    meta = read_meta(args.in_dir)
+    expected_T = meta.get("T") if isinstance(meta, dict) else None
 
-    # shuffle
+    # filter by min_per_class
+    kept = [c for c in labels if len(per_class_files[c]) >= args.min_per_class]
+    dropped = sorted(set(labels) - set(kept))
+    if dropped:
+        print(f"[WARN] drop classes due to min_per_class={args.min_per_class}: {dropped}")
+    labels = kept
+    label2id = {c: i for i, c in enumerate(labels)}
+
+    X_list, y_list = [], []
+    per_class_counts = Counter()
+    bad_clips = 0
+    T_ref, F_ref = None, None
+
+    for c in labels:
+        files = sorted(per_class_files[c])
+        if args.limit_per_class > 0 and len(files) > args.limit_per_class:
+            idx = rng.permutation(len(files))[:args.limit_per_class]
+            files = [files[i] for i in idx]
+
+        for fp in files:
+            try:
+                arr = np.load(fp)  # expect (T, 63)
+            except Exception as e:
+                bad_clips += 1
+                if args.verbose:
+                    print(f"[SKIP] {fp} (np.load error: {e})")
+                continue
+
+            if arr.ndim != 2:
+                bad_clips += 1
+                if args.verbose:
+                    print(f"[SKIP] {fp} (ndim={arr.ndim}, expect 2)")
+                continue
+
+            T, F = arr.shape
+            if T_ref is None:
+                T_ref, F_ref = T, F
+                if expected_T is not None and expected_T != T_ref:
+                    print(f"[WARN] _meta.T={expected_T} but first clip has T={T_ref} (using T={T_ref})")
+
+            if F != F_ref:
+                bad_clips += 1
+                if args.verbose:
+                    print(f"[SKIP] {fp} (F={F}, expect {F_ref})")
+                continue
+
+            if T != T_ref:
+                # safer to skip than silently pad/trim
+                bad_clips += 1
+                if args.verbose:
+                    print(f"[SKIP] {fp} (T={T}, expect {T_ref})")
+                continue
+
+            X_list.append(arr.astype(np.float32))
+            y_list.append(label2id[c])
+            per_class_counts[c] += 1
+
+    if not X_list:
+        print("[ERROR] no valid clips to pack. Check directory layout, shapes, or min_per_class/limit_per_class.")
+        sys.exit(1)
+
+    # stack & shuffle
+    X = np.stack(X_list, axis=0)
+    y = np.array(y_list, dtype=np.int64)
     idx = rng.permutation(len(X))
     X, y = X[idx], y[idx]
 
-    # save
+    # save dataset
     os.makedirs(os.path.dirname(args.out_npz), exist_ok=True)
-    np.savez_compressed(args.out_npz, X=X, y=y, classes=np.array(classes))
+    np.savez_compressed(args.out_npz, X=X, y=y, classes=np.array(labels))
     print(f"[OK] saved: {args.out_npz}")
     print(f"     shape: X={X.shape} y={y.shape}  (T={X.shape[1]}, F={X.shape[2]})")
 
-    # print & save summary
+    # summary
     print("\n[SUMMARY] per-class counts (after filtering):")
-    for c in classes:
+    for c in labels:
         print(f"  {c:16s} : {per_class_counts[c]}")
     if bad_clips:
         print(f"[WARN] skipped bad clips: {bad_clips}")
 
-    # write CSV
+    # CSV
     os.makedirs(os.path.dirname(args.summary_csv), exist_ok=True)
     with open(args.summary_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["class", "count"])
-        for c in classes:
+        for c in labels:
             w.writerow([c, per_class_counts[c]])
         w.writerow(["_bad_clips_skipped", bad_clips])
     print(f"[OK] wrote summary CSV: {args.summary_csv}")
 
-    # also save a tiny JSON manifest next to NPZ
+    # manifest JSON next to NPZ
     manifest = {
         "npz": os.path.abspath(args.out_npz),
         "num_samples": int(len(X)),
         "T": int(X.shape[1]),
         "F": int(X.shape[2]),
-        "classes": classes,
+        "classes": labels,
         "per_class_counts": dict(per_class_counts),
         "bad_clips_skipped": int(bad_clips),
         "seed": args.seed
