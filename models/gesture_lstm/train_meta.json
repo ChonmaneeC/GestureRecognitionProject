@@ -1,8 +1,8 @@
 {
   "data": "d:\\SIIT\\DES400\\ProjectGesture\\dataset\\gestures.npz",
   "outdir": "d:\\SIIT\\DES400\\ProjectGesture\\models\\gesture_lstm",
-  "epochs": 12,
-  "batch_size": 32,
+  "epochs": 15,
+  "batch_size": 64,
   "lr": 0.001,
   "val_split": 0.15,
   "lstm_units": 128,
@@ -13,16 +13,30 @@
   "classes": [
     "desktop_left",
     "desktop_right",
-    "idle"
+    "idle",
+    "screenshot",
+    "scroll_down",
+    "scroll_left",
+    "scroll_right",
+    "scroll_up",
+    "tab_left",
+    "tab_right"
   ],
-  "num_classes": 3,
+  "num_classes": 10,
   "counts": [
-    17.0,
-    27.0,
-    36.0
+    103.0,
+    104.0,
+    132.0,
+    115.0,
+    73.0,
+    160.0,
+    112.0,
+    112.0,
+    97.0,
+    138.0
   ],
   "val_metrics": {
-    "loss": 0.08627898246049881,
-    "accuracy": 1.0
+    "loss": 0.1466677039861679,
+    "accuracy": 0.9554455280303955
   }
 }
