@@ -1,5 +1,5 @@
 {
-  "npz": "d:\\SIIT\\DES400\\ProjectGesture\\dataset\\gestures.npz",
+  "npz": "D:\\SIIT\\DES400\\ProjectGesture\\dataset\\gestures.npz",
   "num_samples": 1348,
   "T": 30,
   "F": 63,
