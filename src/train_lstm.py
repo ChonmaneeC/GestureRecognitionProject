@@ -10,6 +10,7 @@ import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks
+from collections import Counter
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train LSTM gesture classifier")
@@ -72,19 +73,24 @@ def main():
     print(f"[INFO] Loaded: X={X.shape}, y={y.shape}, num_classes={num_classes}")
     print(f"[INFO] Classes: {classes}")
 
-    # ---------- Normalize ----------
-    Xmean = X.mean(axis=(0, 1), keepdims=True)
-    Xstd  = X.std(axis=(0, 1), keepdims=True) + 1e-6
-    Xn = (X - Xmean) / Xstd
+    # ---------- Split train/val (stratified) ----------
+    from sklearn.model_selection import StratifiedShuffleSplit
 
-    # ---------- Split train/val ----------
     assert 0.0 < args.val_split < 0.5, "val_split should be in (0, 0.5)"
-    idx = rng.permutation(N)
-    n_val = max(1, int(args.val_split * N))
-    val_idx, tr_idx = idx[:n_val], idx[n_val:]
-    Xtr, ytr = Xn[tr_idx], y[tr_idx]
-    Xval, yval = Xn[val_idx], y[val_idx]
-    print(f"[INFO] Split: train={len(Xtr)}  val={len(Xval)}")
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=args.val_split, random_state=args.seed)
+    (tr_idx, val_idx), = sss.split(np.zeros(len(y)), y)
+
+    Xtr_raw, ytr = X[tr_idx], y[tr_idx]
+    Xval_raw, yval = X[val_idx], y[val_idx]
+    print(f"[INFO] Split: train={len(Xtr_raw)}  val={len(Xval_raw)}")
+
+    # ---------- Normalize (fit on train only) ----------
+    Xmean = Xtr_raw.mean(axis=(0, 1), keepdims=True)
+    Xstd  = Xtr_raw.std(axis=(0, 1), keepdims=True) + 1e-6
+
+    Xtr = (Xtr_raw - Xmean) / Xstd
+    Xval = (Xval_raw - Xmean) / Xstd
+
 
     # ---------- Class weights (optional) ----------
     class_weight = None
@@ -135,7 +141,7 @@ def main():
     # 2) Normalization + classes
     norm_path = os.path.join("models", "gesture_norm.npz")
     os.makedirs(os.path.dirname(norm_path), exist_ok=True)
-    np.savez(norm_path, mean=Xmean, std=Xstd, classes=np.array(classes), T=T, F=F)
+    np.savez(norm_path, mean=Xmean, std=Xstd, classes=np.array(classes), T=X.shape[1], F=X.shape[2])
     print(f"[OK] Saved final model to {os.path.join(args.outdir, 'final.keras')}")
     print(f"[OK] Saved norm: {norm_path}")
     # 3) Metadata
@@ -156,6 +162,17 @@ def main():
         "counts": counts_list,
         "val_metrics": {"loss": float(val_loss), "accuracy": float(val_acc)}
     }
+
+    counts_train = Counter(ytr.tolist())
+    counts_val   = Counter(yval.tolist())
+
+    meta.update({
+    "T": int(X.shape[1]),
+    "F": int(X.shape[2]),
+    "class_counts_train": {classes[k]: int(v) for k, v in counts_train.items()},
+    "class_counts_val":   {classes[k]: int(v) for k, v in counts_val.items()},
+    })
+    
     with open(os.path.join(args.outdir, "train_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"[OK] Wrote train_meta.json")
