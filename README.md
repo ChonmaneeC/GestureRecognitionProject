@@ -75,6 +75,4 @@ Due to large file sizes, dataset sequences and trained models are stored on Goog
 ## Notes
 - Both best.keras (trained model) and gesture_norm.npz (normalization info) must exist inside the models/ directory before running inference.
 - Gestures such as desktop switch, tab switch use cooldown timers to avoid repeated triggers.
-- Scrolling and mouse actions are continuous (no cooldown).
-- Dataset files (.npy) are not pushed to GitHub (to avoid large file sizes). Please share them via Google Drive/OneDrive and link inside Issues.
 ---
