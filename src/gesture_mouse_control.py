@@ -1,4 +1,4 @@
-# src/gesture_mouse_control_overlay_debug.py
+# src/gesture_mouse_control.py
 # Rule-based mouse & click control (with colored overlay + debug)
 # Left click:  Thumb + Index
 # Right click: Thumb + Ring
@@ -35,6 +35,10 @@ OPEN_PALM_EXTENDED_MIN = 4
 FIST_EXTENDED_MAX = 0
 
 OS = platform.system().lower()
+
+FREEZE_AFTER_ACTION_SEC = 0.12   # แช่เคอร์เซอร์หลังคลิกสั้น ๆ
+DEADZONE_PX = 10                 # ขยับเมาส์เฉพาะเมื่อเกินระยะนี้ (พิกเซล)
+
 
 # ============== Helpers ==============
 def angle_between(v1, v2):
@@ -82,6 +86,10 @@ def main():
     last_click_ts = 0.0
     last_right_click_ts = 0.0
 
+    cursor_frozen_until = 0.0
+    last_screen_pos = None
+
+
     mp_hands = mp.solutions.hands
     mp_draw  = mp.solutions.drawing_utils
 
@@ -107,16 +115,30 @@ def main():
                 fingers = count_fingers(lm2d)
                 num_up = int(sum(fingers.values()))
 
-                # ===== Mouse move =====
+                # ===== Mouse move (with freeze + deadzone) =====
                 cur = tip_point(lm2d, 8)
                 if smooth_cursor is None:
                     smooth_cursor = cur.copy()
                 else:
                     smooth_cursor = CURSOR_SMOOTHING*smooth_cursor + (1-CURSOR_SMOOTHING)*cur
+
                 cx = float(np.clip(smooth_cursor[0], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
                 cy = float(np.clip(smooth_cursor[1], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
                 sx, sy = int(cx*screen_w), int(cy*screen_h)
-                pyautogui.moveTo(sx, sy)
+
+                now = time.time()
+                cursor_is_frozen = (now < cursor_frozen_until) or (left_pinch_down and not dragging)
+
+                if not cursor_is_frozen:
+                    if last_screen_pos is None:
+                        last_screen_pos = (sx, sy)
+                        pyautogui.moveTo(sx, sy)
+                    else:
+                        dx = sx - last_screen_pos[0]
+                        dy = sy - last_screen_pos[1]
+                        if (dx*dx + dy*dy) ** 0.5 >= DEADZONE_PX:
+                            pyautogui.moveTo(sx, sy)
+                            last_screen_pos = (sx, sy)
 
                 # ===== Pinch detection =====
                 dist_left  = pinch_distance(lm2d, 8, 4)   # index + thumb
@@ -153,11 +175,13 @@ def main():
                                 action_text = "[DOUBLE LEFT CLICK]"
                                 print("[DEBUG] Double click triggered")
                                 last_click_ts = 0.0
+                                cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
                             else:
                                 pyautogui.click()
                                 action_text = "[LEFT CLICK DETECTED]"
                                 print("[DEBUG] Single left click triggered")
                                 last_click_ts = now
+                                cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
                         left_pinch_down = False
 
                     if left_pinch_down and not dragging:
@@ -166,6 +190,7 @@ def main():
                             dragging = True
                             action_text = "[DRAG START]"
                             print("[DEBUG] Drag started")
+                            cursor_frozen_until = 0.0
 
                 # ===== Right click =====
                 if allow_clicks and (now - last_right_click_ts) > CLICK_COOLDOWN:
@@ -174,6 +199,8 @@ def main():
                         action_text = "[RIGHT CLICK DETECTED]"
                         print(f"[DEBUG] Right pinch detected: {dist_right:.3f}")
                         last_right_click_ts = now
+                        cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
+
 
                 # ===== Overlay Info =====
                 if SHOW_OVERLAY:
@@ -184,6 +211,7 @@ def main():
 
             else:
                 smooth_cursor = None
+                last_screen_pos = None
                 if dragging:
                     pyautogui.mouseUp(button='left')
                     dragging = False
