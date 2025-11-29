@@ -1,7 +1,4 @@
-# src/realtime_inference.py
 # Real-time gesture inference (MediaPipe Hands → LSTM → pyautogui actions)
-# - Full-screen screenshot (no drag) per OS
-# - Gate screenshot with "open-hand -> fist" sequence to avoid false triggers
 
 import os
 import time
@@ -18,16 +15,13 @@ import pyautogui
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-# --- Model paths ---
 MODEL_DIR  = "models/gesture_lstm"
-MODEL_PATH = "models/gesture_lstm/best.keras"   # preferred
-NORM_PATH  = "models/gesture_norm.npz"          # mean/std/classes/T/F saved at training
+MODEL_PATH = "models/gesture_lstm/best.keras"
+NORM_PATH  = "models/gesture_norm.npz"
 
-# Defaults (overridden by norm file if present)
 T_DEFAULT = 30
 F_DEFAULT = 63
 
-# Per-class probability threshold
 THRESH = {
     "desktop_left": 0.75,
     "desktop_right": 0.75,
@@ -38,17 +32,15 @@ THRESH = {
     "scroll_left": 0.70,
     "scroll_right": 0.70,
     "screenshot": 0.80,
-    "idle": 1.10,   # intentionally unreachable
+    "idle": 1.10,
 }
 
-# Cooldowns (seconds) to prevent repeated one-shot actions
 COOLDOWN = {
     "desktop_left": 0.4,
     "desktop_right": 0.4,
     "tab_left": 0.7,
     "tab_right": 0.7,
     "screenshot": 1.2,
-    # continuous actions: allow 0
     "scroll_up": 0.0,
     "scroll_down": 0.0,
     "scroll_left": 0.0,
@@ -56,29 +48,31 @@ COOLDOWN = {
     "idle": 0.0,
 }
 
-SCROLL_STEP_Y   = 600   # vertical scroll per trigger
-HSCROLL_STEP_X  = 80    # horizontal scroll (fallback arrow keys if needed)
+SCROLL_STEP_Y   = 600
+HSCROLL_STEP_X  = 80
 DRAW_PROB_BAR   = True
 
-# ---- Horizontal scroll mode (บางแอปไม่รองรับ hscroll) ----
-USE_SHIFT_FOR_HSCROLL = True   # True = ใช้ Shift+wheel ทำแนวนอน, False = ใช้ pyautogui.hscroll()
-HSCROLL_WHEEL_FACTOR  = 10     # ขนาดการเลื่อนแนวนอนเมื่อใช้ wheel (ปรับได้)
+USE_SHIFT_FOR_HSCROLL = True
+HSCROLL_WHEEL_FACTOR  = 10
 
 def hscroll_signed(amount):
-    """เลื่อนแนวนอนด้วยวิธีที่เลือกไว้"""
     if USE_SHIFT_FOR_HSCROLL:
-        # amount > 0 = ขวา, amount < 0 = ซ้าย
+        delta = int(amount) * HSCROLL_WHEEL_FACTOR
+
+        print(f"[HSCROLL] amount={amount}, delta={delta}")
+
         pyautogui.keyDown('shift')
-        pyautogui.scroll(int(amount) * HSCROLL_WHEEL_FACTOR)
+        pyautogui.scroll(delta)
         pyautogui.keyUp('shift')
     else:
         try:
+            print(f"[HSCROLL] amount={amount} via hscroll()")
             pyautogui.hscroll(int(amount))
         except Exception:
-            # fallback เป็นปุ่มซ้าย/ขวา
-            pyautogui.press('right' if amount > 0 else 'left')
+            direction_key = 'right' if amount > 0 else 'left'
+            print(f"[HSCROLL] fallback key: {direction_key}")
+            pyautogui.press(direction_key)
 
-# -------- Active-app helper (prefer tab switch inside browsers) --------
 BROWSER_APP_KEYWORDS = ["chrome", "microsoft edge", "edge", "firefox", "brave", "opera", "arc"]
 
 def is_browser_active():
@@ -91,22 +85,27 @@ def is_browser_active():
     except Exception:
         return False
 
-# MediaPipe thresholds
 MIN_DET, MIN_TRK = 0.6, 0.6
 
 OS = platform.system().lower()
 
-# --- Screenshot behavior ---
-SCREENSHOT_REQUIRE_SEQUENCE = True   # must be "open -> fist" to allow screenshot
-SCREENSHOT_WINDOW          = 1.0     # seconds allowed between open and fist
-OPEN_MIN_FINGERS           = 4       # consider "open" if >= this many extended
-FIST_MAX_FINGERS           = 1       # consider "fist" if <= this many extended
+SCREENSHOT_REQUIRE_SEQUENCE = True 
+SCREENSHOT_WINDOW          = 1.0 
+OPEN_MIN_FINGERS           = 4
+FIST_MAX_FINGERS           = 1 
+
+DIR_TAIL_FRAC = 0.28 
+DIR_MIN_DX    = 0.06
+DIR_DEBOUNCE_SEC = 0.45
+
+OPEN_GATE_CLASSES = {"desktop_left","desktop_right","tab_left","tab_right"}
 
 # ================ Actions Mapping ==================
 def do_action(label: str):
+    print(f"[ACTION] {label} at {time.strftime('%H:%M:%S')}")
+
     if label == "desktop_left":
         if OS == "windows":
-            # Alt+Shift+Tab = ย้อนกลับโปรแกรมก่อนหน้า
             pyautogui.keyDown("alt")
             pyautogui.keyDown("shift")
             pyautogui.press("tab")
@@ -119,7 +118,6 @@ def do_action(label: str):
 
     elif label == "desktop_right":
         if OS == "windows":
-            # Alt+Tab = ไปโปรแกรมถัดไป
             pyautogui.keyDown("alt")
             pyautogui.press("tab")
             pyautogui.keyUp("alt")
@@ -141,21 +139,17 @@ def do_action(label: str):
         pyautogui.scroll(-SCROLL_STEP_Y)
 
     elif label == "scroll_left":
-        hscroll_signed(-1)   # ซ้าย = ค่าติดลบ
+        hscroll_signed(+1)
 
     elif label == "scroll_right":
-        hscroll_signed(+1)   # ขวา = ค่าบวก
+        hscroll_signed(-1)
 
     elif label == "screenshot":
-        # Full-screen screenshot by OS (no selection drag)
         if OS == "windows":
-            # Saves to Pictures\Screenshots automatically
             pyautogui.hotkey("winleft", "printscreen")
         elif OS == "darwin":
-            # Saves a file on Desktop
             pyautogui.hotkey("command", "shift", "3")
         else:
-            # Most Linux DEs bind PrintScreen to full screen
             pyautogui.press("printscreen")
 
 # ================== Utilities =====================
@@ -166,19 +160,17 @@ def _angle_between(v1, v2):
     return np.degrees(np.arccos(c))
 
 def _is_extended(lm2d, tip, pip_, mcp):
-    # Determine if finger is extended using PIP joint angle (2D)
     v1 = np.array([lm2d[tip][0]-lm2d[pip_][0], lm2d[tip][1]-lm2d[pip_][1]], dtype=np.float32)
     v2 = np.array([lm2d[mcp][0]-lm2d[pip_][0], lm2d[mcp][1]-lm2d[pip_][1]], dtype=np.float32)
-    return _angle_between(v1, v2) > 160.0
+    return _angle_between(v1, v2) > 175.0
 
 def count_fingers_from_pts2d(lm2d):
-    # lm2d: list[(x,y)] index per MediaPipe Hands 0..20
     return int(sum([
-        _is_extended(lm2d, 4, 3, 2),    # thumb
-        _is_extended(lm2d, 8, 6, 5),    # index
-        _is_extended(lm2d,12,10,9),     # middle
-        _is_extended(lm2d,16,14,13),    # ring
-        _is_extended(lm2d,20,18,17),    # pinky
+        _is_extended(lm2d, 4, 3, 2),
+        _is_extended(lm2d, 8, 6, 5),
+        _is_extended(lm2d,12,10,9),
+        _is_extended(lm2d,16,14,13),
+        _is_extended(lm2d,20,18,17),
     ]))
 
 def load_model_and_norm():
@@ -191,14 +183,13 @@ def load_model_and_norm():
     candidates = [
         os.path.join(MODEL_DIR, "best.keras"),
         os.path.join(MODEL_DIR, "final.keras"),
-        MODEL_DIR,  # fallback: SavedModel directory
+        MODEL_DIR,
     ]
     model = None
     last_err = None
     for path in candidates:
         try:
             if os.path.isdir(path):
-                # Keras 3 SavedModel as inference-only layer
                 from keras.layers import TFSMLayer
                 model = TFSMLayer(path, call_endpoint="serving_default")
             else:
@@ -234,7 +225,6 @@ def main():
     print("[INFO] classes:", classes)
     buf = deque(maxlen=T)
 
-    # thresholds & cooldown maps for existing classes
     thr = {c: THRESH.get(c, 0.8) for c in classes}
     cd  = {c: COOLDOWN.get(c, 0.6) for c in classes}
     last_time = {c: 0.0 for c in classes}
@@ -249,9 +239,11 @@ def main():
 
     print("[INFO] Press 'q' to quit.")
 
-    # screenshot sequence gating state
     last_open_time = 0.0
     had_open_recently = False
+
+    last_lr = None
+    last_lr_ts = 0.0
 
     with mp_hands.Hands(
         max_num_hands=1,
@@ -273,15 +265,15 @@ def main():
             conf_show = 0.0
             top3 = []
 
+            final_label_for_display = label_show
+
             if res.multi_hand_landmarks:
                 hand = res.multi_hand_landmarks[0]
 
-                # infer handedness
                 handed = None
                 if res.multi_handedness:
-                    handed = res.multi_handedness[0].classification[0].label  # 'Left' or 'Right'
+                    handed = res.multi_handedness[0].classification[0].label
 
-                # landmarks → vec63 (mirror x if Left to canonicalize)
                 pts_2d = []
                 vec = []
                 for i in range(21):
@@ -292,90 +284,112 @@ def main():
                         x = 1.0 - x
                     pts_2d.append((x, y))
                     vec.extend([x, y, z])
-                vec = np.asarray(vec, dtype=np.float32)  # (63,)
+                vec = np.asarray(vec, dtype=np.float32)
                 buf.append(vec)
 
-                # draw hand
                 drawer.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS,
                                       styles.get_default_hand_landmarks_style(),
                                       styles.get_default_hand_connections_style())
 
-                # ------------ screenshot sequence gating (open -> fist) ------------
                 num_up = count_fingers_from_pts2d(pts_2d)
+                cv2.putText(frame, f"num_up: {num_up}", (10, 70),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
+
                 now = time.time()
-                # detect open
                 if num_up >= OPEN_MIN_FINGERS:
                     had_open_recently = True
                     last_open_time = now
-                # detect fist
                 is_fist_now = (num_up <= FIST_MAX_FINGERS)
                 open_to_fist_ok = had_open_recently and is_fist_now and (now - last_open_time <= SCREENSHOT_WINDOW)
-                # expire window
                 if had_open_recently and (now - last_open_time > SCREENSHOT_WINDOW):
                     had_open_recently = False
 
-                # -------------------- inference when buffer full --------------------
                 if len(buf) == T:
-                    X = np.stack(list(buf))[None, ...]  # (1, T, 63)
+                    X = np.stack(list(buf))[None, ...]
                     Xn = (X - Xmean) / Xstd
-                    prob = model.predict(Xn, verbose=0)[0]  # (C,)
+                    prob = model.predict(Xn, verbose=0)[0]
 
-                    # --- ทำนาย gesture ---
                     k = int(prob.argmax())
                     label = classes[k]
                     conf = float(prob[k])
                     label_show, conf_show = label, conf
                     top3 = topk(prob, classes, k=3)
 
-                    # --- ยืนยันทิศทางจริง (เฉพาะแนวนอน) ---
+                    if conf >= 0.40:
+                        print(f"[PRED] raw={label_show} conf={conf_show:.2f} "
+                              f"top3={[(l, round(p,2)) for (l,p) in top3]} "
+                              f"handed={handed} num_up={num_up}")
+
                     if label in ("scroll_left", "scroll_right", "tab_left", "tab_right", "desktop_left", "desktop_right"):
-                        def infer_lr_direction(buf, take_frac=0.35, eps=0.02):
-                            # ใช้ "ศูนย์กลางมือ" แทนปลายนิ้วชี้อย่างเดียว → ทนกว่า
-                            idx_candidates = [0, 5, 9, 13, 17, 1, 2, 3, 4]  # wrist + MCPs + โหนดนิ้วโป้ง
+                        handed_local = handed
+                        def infer_lr_direction(buf, take_frac=DIR_TAIL_FRAC, eps=DIR_MIN_DX):
+                            idx_candidates = [0, 5, 9, 13, 17, 1, 2, 3, 4]
                             xs = []
                             for f in buf:
                                 xs.append(np.mean([f[i*3 + 0] for i in idx_candidates]))
                             if not xs:
                                 return None
-                            k = max(1, int(len(xs)*take_frac))
-                            x0 = sum(xs[:k])/k
-                            x1 = sum(xs[-k:])/k
+                            k_tail = max(1, int(len(xs) * take_frac))
+                            x0 = sum(xs[:k_tail]) / k_tail
+                            x1 = sum(xs[-k_tail:]) / k_tail
+
                             dx = x1 - x0
-                            if dx > eps:  return "right"
-                            if dx < -eps: return "left"
+
+                            if dx > eps:
+                                return "right"
+                            if dx < -eps:
+                                return "left"
                             return None
 
                         dir_fix = infer_lr_direction(buf)
                         if dir_fix is not None:
                             base = "tab" if "tab" in label else ("desktop" if "desktop" in label else "scroll")
-                            label = f"{base}_{dir_fix}"
 
-                    # --- Context-aware remap (ให้ tab_* มี priority เมื่ออยู่ในเบราว์เซอร์) ---
-                    if conf >= thr.get(label, 0.8):
-                        if label in ("desktop_left", "desktop_right") and is_browser_active():
-                            # กำลังอยู่ใน browser → แทนที่จะ Alt+Tab ให้เปลี่ยนเป็นเปลี่ยนแท็บ
-                            label = "tab_right" if label.endswith("right") else "tab_left"
-                        elif label in ("tab_left", "tab_right") and not is_browser_active():
-                            # ไม่ได้อยู่ใน browser → สลับโปรแกรมแทน
-                            label = "desktop_right" if label.endswith("right") else "desktop_left"
+                            now_dir = dir_fix
+                            accept_dir = True
+                            if last_lr is not None and now_dir != last_lr and (now - last_lr_ts) < DIR_DEBOUNCE_SEC:
+                                accept_dir = False
 
-                    # --- ทำ action ---
+                            if accept_dir:
+                                label = f"{base}_{now_dir}"
+                                if now_dir != last_lr:
+                                    last_lr = now_dir
+                                    last_lr_ts = now
+                            else:
+                                label = f"{base}_{last_lr if last_lr is not None else now_dir}"
+
+                    if num_up >= OPEN_MIN_FINGERS and label in OPEN_GATE_CLASSES:
+                        label = "idle"
+                        cv2.putText(frame, "[GATED: OPEN HAND]", (10, 52),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,165,255), 2)
+                        print(f"[GATE] open hand → force idle (handed={handed}, num_up={num_up})")
+
+                    final_label_for_display = label
+
+                    if label != "idle":
+                        print(f"[FINAL] label={label} conf={conf:.2f} handed={handed} num_up={num_up}")
+
                     if label != "idle" and conf >= thr.get(label, 0.8):
                         if label == "screenshot" and SCREENSHOT_REQUIRE_SEQUENCE:
-                            if open_to_fist_ok:
-                                if now - last_time[label] >= cd.get(label, 0.6):
-                                    do_action(label)
-                                    last_time[label] = now
-                                    had_open_recently = False
+                            if open_to_fist_ok and (now - last_time[label] >= cd.get(label, 0.6)):
+                                do_action(label)
+                                last_time[label] = now
+                                had_open_recently = False
+                            else:
+                                print(f"[SKIP] screenshot: open_to_fist_ok={open_to_fist_ok}, "
+                                      f"cooldown={now-last_time[label]:.2f}/{cd.get(label,0.6):.2f}")
                         else:
                             if now - last_time[label] >= cd.get(label, 0.6):
                                 do_action(label)
                                 last_time[label] = now
-
+                            else:
+                                print(f"[SKIP] {label}: cooldown {now-last_time[label]:.2f} < {cd.get(label,0.6):.2f}")
 
             # ================= Overlay =================
-            cv2.putText(frame, f"{label_show} : {conf_show:.2f}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0) if label_show!="…" else (200,200,200), 2)
+            cv2.putText(frame, f"{final_label_for_display} : {conf_show:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                        (0,255,0) if final_label_for_display!="…" else (200,200,200),
+                        2)
 
             if DRAW_PROB_BAR and top3:
                 base_y = 60
@@ -392,7 +406,8 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230,230,230), 1)
 
             cv2.imshow("Realtime Inference", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord('q'), 27):
                 break
 
     cap.release()
