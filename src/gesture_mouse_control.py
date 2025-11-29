@@ -1,11 +1,7 @@
-# src/gesture_mouse_control.py
 # Rule-based mouse & click control (with colored overlay + debug)
-# Left click:  Thumb + Index
-# Right click: Thumb + Ring
 
 import time
 import platform
-from collections import defaultdict
 
 import cv2
 import numpy as np
@@ -18,15 +14,17 @@ pyautogui.PAUSE = 0
 
 SHOW_OVERLAY = True
 
-CURSOR_SMOOTHING = 0.35
+CURSOR_SMOOTHING = 0.6
 CURSOR_CLAMP_MARGIN = 0.02
 
-PINCH_DOWN = 0.040   # easier detection
-PINCH_UP   = 0.055
+PINCH_DOWN = 0.045
+PINCH_UP   = 0.052
 
-DOUBLE_CLICK_WINDOW = 0.35
+DOUBLE_CLICK_WINDOW = 0.6
 CLICK_COOLDOWN = 0.20
-DRAG_HOLD_SEC = 0.25
+DRAG_HOLD_SEC = 0.45
+CLICK_HOLD_MAX = 0.28
+
 
 MIN_DET = 0.55
 MIN_TRK = 0.55
@@ -36,8 +34,8 @@ FIST_EXTENDED_MAX = 0
 
 OS = platform.system().lower()
 
-FREEZE_AFTER_ACTION_SEC = 0.12   # แช่เคอร์เซอร์หลังคลิกสั้น ๆ
-DEADZONE_PX = 10                 # ขยับเมาส์เฉพาะเมื่อเกินระยะนี้ (พิกเซล)
+FREEZE_AFTER_ACTION_SEC = 0.18
+DEADZONE_PX = 14
 
 
 # ============== Helpers ==============
@@ -141,12 +139,14 @@ def main():
                             last_screen_pos = (sx, sy)
 
                 # ===== Pinch detection =====
-                dist_left  = pinch_distance(lm2d, 8, 4)   # index + thumb
-                dist_right = pinch_distance(lm2d,16, 4)   # ring + thumb
-                now = time.time()
+                dist_left  = pinch_distance(lm2d, 8, 4)
+                dist_right = pinch_distance(lm2d,16, 4)
+                
                 allow_clicks = not (num_up >= OPEN_PALM_EXTENDED_MIN or num_up <= FIST_EXTENDED_MAX)
 
-                # Overlay lines (debug colors)
+                if (now - last_click_ts) <= DOUBLE_CLICK_WINDOW:
+                    allow_clicks = True
+
                 x_thumb, y_thumb = int(lm2d[4][0]*w), int(lm2d[4][1]*h)
                 x_index, y_index = int(lm2d[8][0]*w), int(lm2d[8][1]*h)
                 x_ring, y_ring   = int(lm2d[16][0]*w), int(lm2d[16][1]*h)
@@ -156,41 +156,45 @@ def main():
                 if dist_right < PINCH_UP:
                     cv2.line(frame, (x_thumb, y_thumb), (x_ring, y_ring), (255,200,0), 5)
 
-                # ===== Left click / double click / drag =====
-                if allow_clicks:
-                    if not left_pinch_down and dist_left < PINCH_DOWN:
-                        print(f"[DEBUG] Left pinch detected: {dist_left:.3f}")
-                        left_pinch_down = True
-                        left_pinch_start_ts = now
+                if allow_clicks and not left_pinch_down and dist_left < PINCH_DOWN:
+                    print(f"[DEBUG] Left pinch detected: {dist_left:.3f}")
+                    left_pinch_down = True
+                    left_pinch_start_ts = now
 
-                    elif left_pinch_down and dist_left >= PINCH_UP:
-                        held = now - left_pinch_start_ts
-                        if dragging:
-                            pyautogui.mouseUp(button='left')
-                            dragging = False
-                            action_text = "[DRAG END]"
-                        else:
+                if left_pinch_down and dist_left >= PINCH_UP:
+                    held = now - left_pinch_start_ts
+                    if dragging:
+                        pyautogui.mouseUp(button='left')
+                        dragging = False
+                        action_text = "[DRAG END]"
+                    else:
+                        can_fire_click = allow_clicks or ((now - last_click_ts) <= DOUBLE_CLICK_WINDOW)
+                        if held <= CLICK_HOLD_MAX and can_fire_click:
                             if (now - last_click_ts) <= DOUBLE_CLICK_WINDOW:
                                 pyautogui.doubleClick()
                                 action_text = "[DOUBLE LEFT CLICK]"
-                                print("[DEBUG] Double click triggered")
+                                print("[DEBUG] Double click triggered (gap=%.3fs, held=%.3fs)" % (now - last_click_ts, held))
                                 last_click_ts = 0.0
                                 cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
                             else:
                                 pyautogui.click()
                                 action_text = "[LEFT CLICK DETECTED]"
-                                print("[DEBUG] Single left click triggered")
+                                print("[DEBUG] Single left click triggered (held=%.3fs)" % held)
                                 last_click_ts = now
                                 cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
-                        left_pinch_down = False
+                        else:
+                            action_text = "[HOLD IGNORED: %.2fs]" % held
+                    left_pinch_down = False
 
-                    if left_pinch_down and not dragging:
-                        if (now - left_pinch_start_ts) >= DRAG_HOLD_SEC:
-                            pyautogui.mouseDown(button='left')
-                            dragging = True
-                            action_text = "[DRAG START]"
-                            print("[DEBUG] Drag started")
-                            cursor_frozen_until = 0.0
+                # ===== Drag start (only when allowed) =====
+                if allow_clicks and left_pinch_down and not dragging:
+                    if (now - left_pinch_start_ts) >= DRAG_HOLD_SEC:
+                        pyautogui.mouseDown(button='left')
+                        dragging = True
+                        action_text = "[DRAG START]"
+                        print("[DEBUG] Drag started")
+                        cursor_frozen_until = 0.0
+
 
                 # ===== Right click =====
                 if allow_clicks and (now - last_right_click_ts) > CLICK_COOLDOWN:
@@ -200,7 +204,7 @@ def main():
                         print(f"[DEBUG] Right pinch detected: {dist_right:.3f}")
                         last_right_click_ts = now
                         cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
-
+                
 
                 # ===== Overlay Info =====
                 if SHOW_OVERLAY:
@@ -222,9 +226,11 @@ def main():
                     last_action = action_text
                 cv2.putText(frame, last_action, (10, h-12),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+                
+            cv2.imshow("Gesture Mouse (Overlay Debug) - q/ESC to quit", frame)
 
-            cv2.imshow("Gesture Mouse (Overlay Debug) - q to quit", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord('q'), 27):
                 break
 
     cap.release()
