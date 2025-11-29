@@ -24,19 +24,45 @@
   ],
   "num_classes": 10,
   "counts": [
-    103.0,
-    104.0,
-    132.0,
-    115.0,
-    73.0,
-    160.0,
-    112.0,
-    112.0,
-    97.0,
-    138.0
+    208.0,
+    209.0,
+    216.0,
+    238.0,
+    158.0,
+    270.0,
+    214.0,
+    210.0,
+    184.0,
+    240.0
   ],
   "val_metrics": {
-    "loss": 0.16858576238155365,
-    "accuracy": 0.9603960514068604
+    "loss": 0.26771530508995056,
+    "accuracy": 0.9052631855010986
+  },
+  "T": 30,
+  "F": 63,
+  "class_counts_train": {
+    "scroll_right": 214,
+    "tab_right": 240,
+    "idle": 216,
+    "tab_left": 184,
+    "scroll_left": 270,
+    "scroll_down": 158,
+    "desktop_right": 209,
+    "scroll_up": 210,
+    "desktop_left": 208,
+    "screenshot": 238
+  },
+  "class_counts_val": {
+    "desktop_left": 37,
+    "scroll_up": 37,
+    "tab_left": 33,
+    "tab_right": 42,
+    "desktop_right": 37,
+    "screenshot": 42,
+    "scroll_left": 48,
+    "idle": 38,
+    "scroll_right": 38,
+    "scroll_down": 28
   }
 }
