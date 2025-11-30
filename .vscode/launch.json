@@ -5,7 +5,7 @@
       "name": "Run Gesture Control",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/src/gesture_mouse_control.py",
+      "program": "${workspaceFolder}/src/unified_control.py",
       "console": "integratedTerminal"
     }
   ]
