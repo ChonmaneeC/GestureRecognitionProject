@@ -178,7 +178,7 @@ def main():
                     y = hand.landmark[i].y
                     z = hand.landmark[i].z
                     #if handed_label == "Left":
-                    #    x = 1.0 - x  # canonicalize left->right
+                       # x = 1.0 - x  # canonicalize left->right
                     pts_2d.append((x, y))
                     vec63.extend([x, y, z])
                 vec63 = np.array(vec63, dtype=np.float32)
