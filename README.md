@@ -20,9 +20,8 @@ Supported gestures are divided into two groups:
 
 ### 🔹 Rule-based gestures (low-latency controls)
 1. **1 finger (index)** → Mouse movement / drag  
-2. **Thumb + Index pinch** → Left Click (single)  
-   - Double pinch quickly = Double Left Click  
-3. **Thumb + Ring pinch** → Right Click  
+2. **Thumb + Index pinch** → Left Click 
+3. **4 fingers up (thumb folded)** → Right Click 
 
 ---
 
@@ -58,21 +57,19 @@ python src/prepare_dataset.py
 #Train with class weights, validation split, early stopping:
 python src/train_lstm.py --epochs 12 --batch_size 32 --use_class_weights
 
-### Run real-time inference
-#Control your PC using hand gestures:
-python src/realtime_inference.py
+### Run unified controller (LSTM + mouse control)
+python src/unified_control.py
 
 ```
 
 ## 📂 Dataset and Models
-
-```bash
 Due to large file sizes, dataset sequences and trained models are stored on Google Drive:  
 [👉 Download here](https://drive.google.com/drive/folders/1LDwHEnwSbyWNUQFL7FyXwD3U3u5Gfear?usp=sharing)
 
-```
 
 ## Notes
 - Both best.keras (trained model) and gesture_norm.npz (normalization info) must exist inside the models/ directory before running inference.
 - Gestures such as desktop switch, tab switch use cooldown timers to avoid repeated triggers.
+- The system supports both left and right hands for LSTM gestures (x-axis mirroring), while rule-based mouse control is tuned primarily for the right hand.
+
 ---
