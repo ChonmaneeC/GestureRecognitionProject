@@ -1,4 +1,3 @@
-# src/unified_control.py
 # Run Rule-based mouse control + LSTM actions together from ONE webcam/MediaPipe stream
 
 import os, time, platform
@@ -15,7 +14,7 @@ pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 OS = platform.system().lower()
 
-# ====== Model paths (same as realtime_inference.py) ======
+# ====== Model paths ======
 MODEL_DIR  = "models/gesture_lstm"
 MODEL_PATH = "models/gesture_lstm/best.keras"
 NORM_PATH  = "models/gesture_norm.npz"
@@ -37,27 +36,28 @@ COOLDOWN = {
     "scroll_left": 0.0, "scroll_right": 0.0, "idle": 0.0,
 }
 SCROLL_STEP_Y = 600
+
 USE_SHIFT_FOR_HSCROLL = True
 HSCROLL_WHEEL_FACTOR = 10
 
-# ---- Direction stabilization (debounce) ----
+MOUSE_POSE_BLOCK = True
+MOUSE_POSE_MIN_FINGERS = 1
+MOUSE_POSE_MAX_FINGERS = 1
+
 DIR_TAIL_FRAC    = 0.28
 DIR_MIN_DX       = 0.040
 DIR_DEBOUNCE_SEC = 0.25
 
-# ---- Screenshot gating (open -> fist) ----
 SCREENSHOT_REQUIRE_SEQUENCE = True
 SCREENSHOT_WINDOW = 1.0
 OPEN_MIN_FINGERS  = 4
 FIST_MAX_FINGERS  = 1
 
-# ====== Rule-based mouse control config ======
 SHOW_OVERLAY = True
 CURSOR_SMOOTHING = 0.35
 CURSOR_CLAMP_MARGIN = 0.02
 PINCH_DOWN = 0.040
 PINCH_UP   = 0.055
-DOUBLE_CLICK_WINDOW = 0.35
 CLICK_COOLDOWN = 0.20
 DRAG_HOLD_SEC = 0.25
 MIN_DET, MIN_TRK = 0.6, 0.6
@@ -65,11 +65,11 @@ MIN_DET, MIN_TRK = 0.6, 0.6
 OPEN_PALM_EXTENDED_MIN = 4
 FIST_EXTENDED_MAX = 0
 
-# Anti-jitter add-on (freeze + deadzone)
 FREEZE_AFTER_ACTION_SEC = 0.12
 DEADZONE_PX = 10
 
-# ===================== Helpers =====================
+RIGHT_HOLD_SEC = 0.20
+
 def _angle_between(v1, v2):
     num = float(np.dot(v1, v2))
     den = float(np.linalg.norm(v1) * np.linalg.norm(v2)) + 1e-6
@@ -81,14 +81,17 @@ def _is_extended(lm2d, tip, pip_, mcp):
     v2 = np.array([lm2d[mcp][0]-lm2d[pip_][0], lm2d[mcp][1]-lm2d[pip_][1]], dtype=np.float32)
     return _angle_between(v1, v2) > 160.0
 
-def count_fingers_from_pts2d(lm2d):
-    return int(sum([
-        _is_extended(lm2d, 4, 3, 2),
-        _is_extended(lm2d, 8, 6, 5),
-        _is_extended(lm2d,12,10, 9),
-        _is_extended(lm2d,16,14,13),
-        _is_extended(lm2d,20,18,17),
-    ]))
+def count_fingers_and_flags(lm2d):
+    """Return (num_up, flags_dict) for each finger."""
+    flags = {
+        "thumb":  _is_extended(lm2d, 4, 3, 2),
+        "index":  _is_extended(lm2d, 8, 6, 5),
+        "middle": _is_extended(lm2d,12,10,9),
+        "ring":   _is_extended(lm2d,16,14,13),
+        "pinky":  _is_extended(lm2d,20,18,17),
+    }
+    num = int(sum(flags.values()))
+    return num, flags
 
 def hscroll_signed(amount):
     if USE_SHIFT_FOR_HSCROLL:
@@ -148,32 +151,49 @@ def topk(prob, classes, k=3):
 
 # ===================== Actions =====================
 def do_action(label: str):
+    now_str = time.strftime("%H:%M:%S")
+    print(f"[ACTION] {now_str} -> {label}")
+
     if label == "desktop_left":
         if OS == "windows":
-            pyautogui.keyDown("alt"); pyautogui.keyDown("shift"); pyautogui.press("tab"); pyautogui.keyUp("shift"); pyautogui.keyUp("alt")
+            pyautogui.keyDown("alt")
+            pyautogui.keyDown("shift")
+            pyautogui.press("tab")
+            pyautogui.keyUp("shift")
+            pyautogui.keyUp("alt")
         elif OS == "darwin":
             pyautogui.hotkey("command", "shift", "tab")
         else:
             pyautogui.hotkey("alt", "shift", "tab")
+
     elif label == "desktop_right":
         if OS == "windows":
-            pyautogui.keyDown("alt"); pyautogui.press("tab"); pyautogui.keyUp("alt")
+            pyautogui.keyDown("alt")
+            pyautogui.press("tab")
+            pyautogui.keyUp("alt")
         elif OS == "darwin":
             pyautogui.hotkey("command", "tab")
         else:
             pyautogui.hotkey("alt", "tab")
+
     elif label == "tab_left":
         pyautogui.hotkey("ctrl", "shift", "tab")
+
     elif label == "tab_right":
         pyautogui.hotkey("ctrl", "tab")
+
     elif label == "scroll_up":
         pyautogui.scroll(+SCROLL_STEP_Y)
+
     elif label == "scroll_down":
         pyautogui.scroll(-SCROLL_STEP_Y)
+
     elif label == "scroll_left":
         hscroll_signed(-1)
+
     elif label == "scroll_right":
         hscroll_signed(+1)
+
     elif label == "screenshot":
         if OS == "windows":
             pyautogui.hotkey("winleft", "printscreen")
@@ -184,13 +204,11 @@ def do_action(label: str):
 
 # ===================== Main =====================
 def main():
-    # ---- Load model/norm for LSTM ----
     model, Xmean, Xstd, classes, T, F = load_model_and_norm()
     thr = {c: THRESH.get(c, 0.8) for c in classes}
     cd  = {c: COOLDOWN.get(c, 0.6) for c in classes}
     last_time = {c: 0.0 for c in classes}
 
-    # ---- Shared camera/mediapipe ----
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Cannot open camera")
@@ -198,12 +216,10 @@ def main():
     drawer   = mp.solutions.drawing_utils
     styles   = mp.solutions.drawing_styles
 
-    # ---- Buffers/state for LSTM ----
     buf = deque(maxlen=T)
     last_lr_dir, last_lr_ts = None, 0.0
     last_open_time, had_open_recently = 0.0, False
 
-    # ---- States for Rule-based mouse ----
     screen_w, screen_h = pyautogui.size()
     smooth_cursor = None
     last_action_text = ""
@@ -211,14 +227,19 @@ def main():
     left_pinch_start_ts = 0.0
     dragging = False
     last_click_ts = 0.0
+
+    right_active = False
+    right_start_ts = 0.0
     last_right_click_ts = 0.0
+
     cursor_frozen_until = 0.0
     last_screen_pos = None
 
-    # ---- Mode toggle ----
     use_rule = True
     use_lstm = True
     print("[INFO] Unified control running. Keys: 1=toggle Rule, 2=toggle LSTM, p=pause/resume, q=quit")
+
+    current_lstm_label = "idle"
 
     with mp_hands.Hands(
         max_num_hands=1,
@@ -236,12 +257,14 @@ def main():
             res = hands.process(rgb)
 
             now = time.time()
+            current_lstm_label = "idle"
             label_show, conf_show = "…", 0.0
             top3 = []
             num_up = 0
             handed = None
             pts_2d = None
             vec63 = None
+            fingers = None
 
             if res.multi_hand_landmarks:
                 hand = res.multi_hand_landmarks[0]
@@ -258,85 +281,102 @@ def main():
                     pts_2d.append((x, y))
                     vec.extend([x, y, z])
                 vec63 = np.asarray(vec, dtype=np.float32)
+
                 drawer.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS,
                                       styles.get_default_hand_landmarks_style(),
                                       styles.get_default_hand_connections_style())
 
-                # --------- Count fingers (shared) ---------
-                num_up = count_fingers_from_pts2d(pts_2d)
+                num_up, fingers = count_fingers_and_flags(pts_2d)
 
-                # ================= Rule-based (mouse) =================
+                # ================= Rule-based =================
                 if use_rule:
-                    # move (with freeze/deadzone)
-                    def tip_point(idx=8):
-                        return np.array([pts_2d[idx][0], pts_2d[idx][1]], dtype=np.float32)
-
-                    cur = tip_point(8)
-                    if smooth_cursor is None:
-                        smooth_cursor = cur.copy()
+                    if use_lstm and current_lstm_label in ("scroll_up", "scroll_down", "scroll_left", "scroll_right"):
+                        smooth_cursor = None
+                        last_screen_pos = None
                     else:
-                        smooth_cursor = CURSOR_SMOOTHING*smooth_cursor + (1-CURSOR_SMOOTHING)*cur
+                        def tip_point(idx=8):
+                            return np.array([pts_2d[idx][0], pts_2d[idx][1]], dtype=np.float32)
 
-                    cx = float(np.clip(smooth_cursor[0], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
-                    cy = float(np.clip(smooth_cursor[1], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
-                    sx, sy = int(cx*screen_w), int(cy*screen_h)
-
-                    allow_clicks = not (num_up >= OPEN_PALM_EXTENDED_MIN or num_up <= FIST_EXTENDED_MAX)
-                    dist_left  = float(np.linalg.norm(np.array(pts_2d[8]) - np.array(pts_2d[4])))
-                    dist_right = float(np.linalg.norm(np.array(pts_2d[16]) - np.array(pts_2d[4])))
-
-                    cursor_is_frozen = (now < cursor_frozen_until) or (left_pinch_down and not dragging)
-                    if not cursor_is_frozen:
-                        if last_screen_pos is None:
-                            last_screen_pos = (sx, sy); pyautogui.moveTo(sx, sy)
+                        cur = tip_point(8)
+                        if smooth_cursor is None:
+                            smooth_cursor = cur.copy()
                         else:
-                            dx = sx - last_screen_pos[0]; dy = sy - last_screen_pos[1]
-                            if (dx*dx + dy*dy) ** 0.5 >= DEADZONE_PX:
-                                pyautogui.moveTo(sx, sy); last_screen_pos = (sx, sy)
+                            smooth_cursor = CURSOR_SMOOTHING*smooth_cursor + (1-CURSOR_SMOOTHING)*cur
 
-                    # Left click / double click / drag
-                    if allow_clicks:
-                        if not left_pinch_down and dist_left < PINCH_DOWN:
-                            left_pinch_down = True; left_pinch_start_ts = now
-                        elif left_pinch_down and dist_left >= PINCH_UP:
-                            held = now - left_pinch_start_ts
-                            if dragging:
-                                pyautogui.mouseUp(button='left')
-                                dragging = False; last_action_text = "[DRAG END]"
+                        cx = float(np.clip(smooth_cursor[0], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
+                        cy = float(np.clip(smooth_cursor[1], CURSOR_CLAMP_MARGIN, 1-CURSOR_CLAMP_MARGIN))
+                        sx, sy = int(cx*screen_w), int(cy*screen_h)
+
+                        allow_clicks = not (num_up >= OPEN_PALM_EXTENDED_MIN or num_up <= FIST_EXTENDED_MAX)
+                        dist_left  = float(np.linalg.norm(np.array(pts_2d[8])  - np.array(pts_2d[4])))
+
+                        cursor_is_frozen = (now < cursor_frozen_until) or (left_pinch_down and not dragging)
+                        if not cursor_is_frozen:
+                            if last_screen_pos is None:
+                                last_screen_pos = (sx, sy)
+                                pyautogui.moveTo(sx, sy)
                             else:
-                                if (now - last_click_ts) <= DOUBLE_CLICK_WINDOW:
-                                    pyautogui.doubleClick()
-                                    last_action_text = "[DOUBLE LEFT CLICK]"
-                                    last_click_ts = 0.0
+                                dx = sx - last_screen_pos[0]; dy = sy - last_screen_pos[1]
+                                if (dx*dx + dy*dy) ** 0.5 >= DEADZONE_PX:
+                                    pyautogui.moveTo(sx, sy)
+                                    last_screen_pos = (sx, sy)
+
+                        if allow_clicks:
+                            if not left_pinch_down and dist_left < PINCH_DOWN:
+                                left_pinch_down = True
+                                left_pinch_start_ts = now
+
+                            elif left_pinch_down and dist_left >= PINCH_UP:
+                                held = now - left_pinch_start_ts
+
+                                if dragging:
+                                    pyautogui.mouseUp(button='left')
+                                    dragging = False
+                                    last_action_text = "[DRAG END]"
+                                    print(last_action_text)
                                 else:
                                     pyautogui.click()
                                     last_action_text = "[LEFT CLICK]"
-                                    last_click_ts = now
-                                cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
-                            left_pinch_down = False
+                                    print(last_action_text)
+                                    cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
 
-                        if left_pinch_down and not dragging:
-                            if (now - left_pinch_start_ts) >= DRAG_HOLD_SEC:
-                                pyautogui.mouseDown(button='left')
-                                dragging = True; last_action_text = "[DRAG START]"
-                                cursor_frozen_until = 0.0
+                                left_pinch_down = False
 
-                    # Right click
-                    if allow_clicks and (now - last_right_click_ts) > CLICK_COOLDOWN:
-                        if dist_right < PINCH_DOWN:
-                            pyautogui.rightClick()
-                            last_action_text = "[RIGHT CLICK]"
-                            last_right_click_ts = now
-                            cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
+                            if left_pinch_down and not dragging:
+                                if (now - left_pinch_start_ts) >= DRAG_HOLD_SEC:
+                                    pyautogui.mouseDown(button='left')
+                                    dragging = True
+                                    last_action_text = "[DRAG START]"
+                                    print(last_action_text)
+                                    cursor_frozen_until = 0.0
+
+                        is_right_shape = (num_up == 4 and fingers is not None and not fingers["thumb"])
+
+                        if is_right_shape and not right_active:
+                            right_active = True
+                            right_start_ts = now
+
+                        if right_active:
+                            if not is_right_shape:
+                                right_active = False
+                            else:
+                                if (now - right_start_ts) >= RIGHT_HOLD_SEC:
+                                    if (now - last_right_click_ts) > CLICK_COOLDOWN:
+                                        pyautogui.rightClick()
+                                        last_action_text = "[RIGHT CLICK]"
+                                        print(last_action_text)
+                                        last_right_click_ts = now
+                                        cursor_frozen_until = now + FREEZE_AFTER_ACTION_SEC
+                                        right_active = False
 
                 # ================= LSTM Inference =================
-                # Pause LSTM when rule-based is likely interacting (pinch/drag) to avoid conflicts
                 block_lstm = dragging or left_pinch_down
-                if use_lstm and not block_lstm:
+                if use_lstm and not block_lstm and vec63 is not None:
                     buf.append(vec63)
-                    # open->fist gate
+
                     if num_up >= OPEN_MIN_FINGERS:
-                        had_open_recently = True; last_open_time = now
+                        had_open_recently = True
+                        last_open_time = now
                     is_fist_now = (num_up <= FIST_MAX_FINGERS)
                     open_to_fist_ok = had_open_recently and is_fist_now and (now - last_open_time <= SCREENSHOT_WINDOW)
                     if had_open_recently and (now - last_open_time > SCREENSHOT_WINDOW):
@@ -344,14 +384,17 @@ def main():
 
                     if len(buf) == T:
                         X = np.stack(list(buf))[None, ...]
-                        # norm
                         Xn = (X - Xmean) / Xstd
                         prob = model.predict(Xn, verbose=0)[0]
-                        k = int(prob.argmax()); classes_list = classes
-                        label = classes_list[k]; conf = float(prob[k])
+                        k = int(prob.argmax())
+                        label = classes[k]
+                        conf = float(prob[k])
                         label_show, conf_show = label, conf
-                        # fix direction (tail + debounce) only for LR labels
-                        if label in ("scroll_left","scroll_right","tab_left","tab_right","desktop_left","desktop_right"):
+                        top3 = topk(prob, classes, k=3)
+
+                        if label in ("scroll_left","scroll_right","tab_left","tab_right",
+                                     "desktop_left","desktop_right"):
+
                             def stable_lr_direction(buf_, tail_frac=DIR_TAIL_FRAC, min_dx=DIR_MIN_DX):
                                 idx_candidates = [0,5,9,13,17,1,2,3,4]
                                 B = len(buf_)
@@ -368,6 +411,7 @@ def main():
                                 if dx >  min_dx: return "right", dx
                                 if dx < -min_dx: return "left",  dx
                                 return None, dx
+
                             dir_now, dx_val = stable_lr_direction(buf)
                             if dir_now is not None:
                                 if (last_lr_dir is None) or (dir_now == last_lr_dir) or (now - last_lr_ts >= DIR_DEBOUNCE_SEC):
@@ -375,36 +419,38 @@ def main():
                                         last_lr_dir, last_lr_ts = dir_now, now
                                 else:
                                     dir_now = last_lr_dir
+
                             if dir_now is not None:
                                 base = "tab" if "tab" in label else ("desktop" if "desktop" in label else "scroll")
                                 label = f"{base}_{dir_now}"
-                        # context remap between desktop/tab based on active window
-                        if conf >= thr.get(label, 0.8):
-                            if label in ("desktop_left","desktop_right") and is_browser_active():
-                                label = "tab_right" if label.endswith("right") else "tab_left"
-                            elif label in ("tab_left","tab_right") and not is_browser_active():
-                                label = "desktop_right" if label.endswith("right") else "desktop_left"
-                        # fire action with cooldown
+
                         if label != "idle" and conf >= thr.get(label, 0.8):
                             if label == "screenshot" and SCREENSHOT_REQUIRE_SEQUENCE:
                                 if open_to_fist_ok and (now - last_time[label] >= cd.get(label, 0.6)):
-                                    do_action(label); last_time[label] = now; had_open_recently = False
+                                    do_action(label)
+                                    last_time[label] = now
+                                    had_open_recently = False
                             else:
                                 if now - last_time[label] >= cd.get(label, 0.6):
-                                    do_action(label); last_time[label] = now
+                                    do_action(label)
+                                    last_time[label] = now
+
+                        current_lstm_label = label
 
             else:
-                # No hand: reset rule-based states
                 smooth_cursor = None
                 last_screen_pos = None
-                if dragging:
-                    pyautogui.mouseUp(button='left'); dragging = False
                 left_pinch_down = False
+                right_active = False
+                if dragging:
+                    pyautogui.mouseUp(button='left')
+                    dragging = False
 
             # ================= Overlay =================
             if SHOW_OVERLAY:
                 cv2.putText(frame, f"LSTM: {label_show} {conf_show:.2f}", (10, 28),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0) if label_show!="…" else (200,200,200), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                            (0,255,0) if label_show != "…" else (200,200,200), 2)
                 cv2.putText(frame, f"Rule={'ON' if use_rule else 'OFF'}  LSTM={'ON' if use_lstm else 'OFF'}", (10, 54),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220,220,220), 1)
                 if last_action_text:
@@ -413,11 +459,15 @@ def main():
 
             cv2.imshow("Unified Control (Rule + LSTM) - 1:Rule 2:LSTM p:pause q:quit", frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'): break
-            elif key == ord('1'): use_rule = not use_rule
-            elif key == ord('2'): use_lstm = not use_lstm
+            if key == ord('q'):
+                break
+            elif key == ord('1'):
+                use_rule = not use_rule
+            elif key == ord('2'):
+                use_lstm = not use_lstm
             elif key == ord('p'):
-                use_rule = False; use_lstm = False
+                use_rule = False
+                use_lstm = False
 
     cap.release()
     cv2.destroyAllWindows()
