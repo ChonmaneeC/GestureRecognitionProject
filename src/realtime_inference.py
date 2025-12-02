@@ -58,9 +58,7 @@ HSCROLL_WHEEL_FACTOR  = 10
 def hscroll_signed(amount):
     if USE_SHIFT_FOR_HSCROLL:
         delta = int(amount) * HSCROLL_WHEEL_FACTOR
-
         print(f"[HSCROLL] amount={amount}, delta={delta}")
-
         pyautogui.keyDown('shift')
         pyautogui.scroll(delta)
         pyautogui.keyUp('shift')
@@ -174,12 +172,6 @@ def count_fingers_from_pts2d(lm2d):
     ]))
 
 def load_model_and_norm():
-    """
-    Load model with preference:
-      1) models/gesture_lstm/best.keras
-      2) models/gesture_lstm/final.keras
-      3) SavedModel dir via keras.layers.TFSMLayer (Keras 3)
-    """
     candidates = [
         os.path.join(MODEL_DIR, "best.keras"),
         os.path.join(MODEL_DIR, "final.keras"),
@@ -280,8 +272,6 @@ def main():
                     x = hand.landmark[i].x
                     y = hand.landmark[i].y
                     z = hand.landmark[i].z
-                    if handed == "Left":
-                        x = 1.0 - x
                     pts_2d.append((x, y))
                     vec.extend([x, y, z])
                 vec = np.asarray(vec, dtype=np.float32)
@@ -316,40 +306,43 @@ def main():
                     top3 = topk(prob, classes, k=3)
 
                     if conf >= 0.40:
-                        print(f"[PRED] raw={label_show} conf={conf_show:.2f} "
-                              f"top3={[(l, round(p,2)) for (l,p) in top3]} "
-                              f"handed={handed} num_up={num_up}")
+                        print(
+                            f"[PRED] raw_label={label_show} conf={conf_show:.2f} "
+                            f"top3={[(l, round(p,2)) for (l,p) in top3]} "
+                            f"handed={handed} num_up={num_up}"
+                        )
 
+                    # ===== Direction fix for LR gestures =====
                     if label in ("scroll_left", "scroll_right", "tab_left", "tab_right", "desktop_left", "desktop_right"):
-                        handed_local = handed
-                        def infer_lr_direction(buf, take_frac=DIR_TAIL_FRAC, eps=DIR_MIN_DX):
+                        def infer_lr_direction(buf_, take_frac=DIR_TAIL_FRAC, eps=DIR_MIN_DX):
                             idx_candidates = [0, 5, 9, 13, 17, 1, 2, 3, 4]
                             xs = []
-                            for f in buf:
+                            for f in buf_:
                                 xs.append(np.mean([f[i*3 + 0] for i in idx_candidates]))
                             if not xs:
-                                return None
+                                return None, 0.0, 0.0
                             k_tail = max(1, int(len(xs) * take_frac))
                             x0 = sum(xs[:k_tail]) / k_tail
                             x1 = sum(xs[-k_tail:]) / k_tail
-
                             dx = x1 - x0
-
                             if dx > eps:
-                                return "right"
+                                return "right", x0, x1
                             if dx < -eps:
-                                return "left"
-                            return None
+                                return "left", x0, x1
+                            return None, x0, x1
 
-                        dir_fix = infer_lr_direction(buf)
+                        dir_fix, x0_debug, x1_debug = infer_lr_direction(buf)
+                        print(
+                            f"[DIR_DEBUG] handed={handed} raw_label={label} "
+                            f"x_start={x0_debug:.3f} x_end={x1_debug:.3f}"
+                        )
+
                         if dir_fix is not None:
                             base = "tab" if "tab" in label else ("desktop" if "desktop" in label else "scroll")
-
                             now_dir = dir_fix
                             accept_dir = True
                             if last_lr is not None and now_dir != last_lr and (now - last_lr_ts) < DIR_DEBOUNCE_SEC:
                                 accept_dir = False
-
                             if accept_dir:
                                 label = f"{base}_{now_dir}"
                                 if now_dir != last_lr:
@@ -357,7 +350,11 @@ def main():
                                     last_lr_ts = now
                             else:
                                 label = f"{base}_{last_lr if last_lr is not None else now_dir}"
+                            print(f"[DIR_APPLY] handed={handed} dir_fix={dir_fix} final_label={label}")
+                        else:
+                            print(f"[DIR_DEBUG] handed={handed} dx too small → keep label={label}")
 
+                    # Gate open-palm
                     if num_up >= OPEN_MIN_FINGERS and label in OPEN_GATE_CLASSES:
                         label = "idle"
                         cv2.putText(frame, "[GATED: OPEN HAND]", (10, 52),
@@ -376,14 +373,19 @@ def main():
                                 last_time[label] = now
                                 had_open_recently = False
                             else:
-                                print(f"[SKIP] screenshot: open_to_fist_ok={open_to_fist_ok}, "
-                                      f"cooldown={now-last_time[label]:.2f}/{cd.get(label,0.6):.2f}")
+                                print(
+                                    f"[SKIP] screenshot: open_to_fist_ok={open_to_fist_ok}, "
+                                    f"cooldown={now-last_time[label]:.2f}/{cd.get(label,0.6):.2f}"
+                                )
                         else:
                             if now - last_time[label] >= cd.get(label, 0.6):
                                 do_action(label)
                                 last_time[label] = now
                             else:
-                                print(f"[SKIP] {label}: cooldown {now-last_time[label]:.2f} < {cd.get(label,0.6):.2f}")
+                                print(
+                                    f"[SKIP] {label}: cooldown {now-last_time[label]:.2f} < "
+                                    f"{cd.get(label,0.6):.2f}"
+                                )
 
             # ================= Overlay =================
             cv2.putText(frame, f"{final_label_for_display} : {conf_show:.2f}", (10, 30),
