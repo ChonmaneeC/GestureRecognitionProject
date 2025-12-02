@@ -1,4 +1,4 @@
-# src/eval_confusion.py
+#confusion matrix and classification report on validation set
 
 import os
 import json
