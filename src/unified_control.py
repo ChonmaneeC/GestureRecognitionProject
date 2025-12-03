@@ -166,7 +166,7 @@ def do_action(label: str):
         else:
             pyautogui.hotkey("alt", "shift", "tab")
 
-    elif label == "desktop_right":
+    elif label == "desktop2_right":
         if OS == "windows":
             pyautogui.keyDown("alt")
             pyautogui.press("tab")
@@ -276,8 +276,6 @@ def main():
                     x = hand.landmark[i].x
                     y = hand.landmark[i].y
                     z = hand.landmark[i].z
-                    if handed == "Left":
-                        x = 1.0 - x
                     pts_2d.append((x, y))
                     vec.extend([x, y, z])
                 vec63 = np.asarray(vec, dtype=np.float32)
